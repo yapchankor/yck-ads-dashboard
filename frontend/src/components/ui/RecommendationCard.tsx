@@ -151,6 +151,9 @@ export function RecommendationCard({
         } else if (result.status === "error") {
           setError(result.execution_status || "Execution failed");
           setCardStatus("pending");
+        } else if (result.status === "already_tracking") {
+          setError(result.message || "This recommendation is already in Outcome Tracking.");
+          setCardStatus("pending");
         } else {
           setCardStatus("applied");
         }

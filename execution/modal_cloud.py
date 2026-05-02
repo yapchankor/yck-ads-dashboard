@@ -1311,13 +1311,26 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "campaign_id": request.campaign_id,
     })
 
-    # Check if already tracking
-    if any(
-        t.get('recommendation_id') == request.recommendation_id
-        or (request_key and (t.get("normalized_key") == request_key or normalized_recommendation_key(t) == request_key))
-        for t in tracking_data
-    ):
+    def matches_request(record: dict):
+        return (
+            record.get('recommendation_id') == request.recommendation_id
+            or (
+                request_key
+                and (
+                    record.get("normalized_key") == request_key
+                    or normalized_recommendation_key(record) == request_key
+                )
+            )
+        )
+
+    # Failed attempts should not block a retry; successful/manual/dismissed rows should.
+    matched_records = [record for record in tracking_data if matches_request(record)]
+    active_matches = [record for record in matched_records if record.get("status") != "Failed"]
+    if active_matches:
         return {"status": "already_tracking", "message": "This recommendation is already being tracked."}
+
+    if matched_records:
+        tracking_data = [record for record in tracking_data if not matches_request(record)]
 
     # --- EXECUTION LOGIC ---
     is_dismissal = request.status == "Dismissed"
