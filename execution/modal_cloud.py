@@ -1250,6 +1250,13 @@ def update_tracking_snapshots_impl():
 
     return {"updated": updated}
 
+def google_execution_result(action_label: str, result: dict):
+    if result.get("status") == "success":
+        return f"Applied: {action_label}", "applied"
+
+    message = result.get("message") or result.get("error") or "Google Ads API returned an error"
+    return f"Error: {message}", "error"
+
 @app.function(
     image=image,
     secrets=[
@@ -1329,16 +1336,13 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
 
             if request.action_type == "add_negative_keyword" and request.campaign_id and request.keyword:
                 res = google_ads_executor.add_negative_keyword(customer_id, request.campaign_id, request.keyword)
-                execution_status = f"Applied: {res.get('status')}"
-                response_status = "applied"
+                execution_status, response_status = google_execution_result("negative keyword added", res)
             elif request.action_type == "keyword_action" and suggested_action_norm in {"paused", "pause"} and request.target_id:
                 res = google_ads_executor.pause_ad_group_criterion(customer_id, request.target_id)
-                execution_status = f"Applied: {res.get('status')}"
-                response_status = "applied"
+                execution_status, response_status = google_execution_result("keyword paused", res)
             elif request.action_type == "bid_adjustment" and request.target_id and request.suggested_bid:
                 res = google_ads_executor.update_bid(customer_id, request.target_id, request.suggested_bid)
-                execution_status = f"Applied: {res.get('status')}"
-                response_status = "applied"
+                execution_status, response_status = google_execution_result("bid updated", res)
             else:
                 execution_status = "Manual: unsupported Google action"
                 response_status = "manual_required"

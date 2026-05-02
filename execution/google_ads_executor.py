@@ -1,6 +1,7 @@
 import os
 from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.errors import GoogleAdsException
+from google.protobuf import field_mask_pb2
 
 def load_google_ads_client():
     """Load Google Ads API client from credentials."""
@@ -49,7 +50,7 @@ def pause_ad_group_criterion(customer_id, criterion_resource_name):
     criterion = operation.update
     criterion.resource_name = criterion_resource_name
     criterion.status = client.enums.AdGroupCriterionStatusEnum.PAUSED
-    client.copy_from(operation.update_mask, client.get_helper().field_mask_helper_get_mask(None, criterion))
+    operation.update_mask.CopyFrom(field_mask_pb2.FieldMask(paths=["status"]))
     
     try:
         response = agc_service.mutate_ad_group_criteria(
@@ -67,8 +68,9 @@ def update_bid(customer_id, criterion_resource_name, suggested_bid):
     operation = client.get_type("AdGroupCriterionOperation")
     criterion = operation.update
     criterion.resource_name = criterion_resource_name
-    criterion.cpc_bid_micros = int(suggested_bid * 1_000_000)
-    client.copy_from(operation.update_mask, client.get_helper().field_mask_helper_get_mask(None, criterion))
+    bid_micros = round(suggested_bid * 1_000_000 / 10_000) * 10_000
+    criterion.cpc_bid_micros = int(bid_micros)
+    operation.update_mask.CopyFrom(field_mask_pb2.FieldMask(paths=["cpc_bid_micros"]))
     
     try:
         response = agc_service.mutate_ad_group_criteria(
