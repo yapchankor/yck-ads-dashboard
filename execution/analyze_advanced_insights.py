@@ -40,7 +40,9 @@ def analyze_search_queries(search_queries, keywords):
                 "impressions": query['impressions'],
                 "campaign_name": query['campaign_name'],
                 "campaign_id": query.get('campaign_id', ''),  # Include campaign ID for apply_recommendations.py
-                "ad_group_name": query['ad_group_name']
+                "campaign_status": query.get('campaign_status', ''),
+                "ad_group_name": query['ad_group_name'],
+                "ad_group_status": query.get('ad_group_status', '')
             })
             total_wasted_spend += query['cost']
 

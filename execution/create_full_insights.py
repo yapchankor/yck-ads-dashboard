@@ -42,12 +42,27 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
 
     print(f"Loaded: {len(campaigns)} campaigns, {len(keywords)} keywords, {len(search_queries)} search queries")
 
+    def is_inactive_status(status):
+        return str(status or '').upper() in {'PAUSED', 'REMOVED', 'DELETED', 'INACTIVE', 'ENDED', 'ARCHIVED'}
+
+    def row_scope_is_active(row, include_entity_status=True):
+        if is_inactive_status(row.get('campaign_status')):
+            return False
+        if is_inactive_status(row.get('ad_group_status')):
+            return False
+        if include_entity_status and is_inactive_status(row.get('status')):
+            return False
+        return True
+
+    active_keywords = [k for k in keywords if row_scope_is_active(k)]
+    active_search_queries = [q for q in search_queries if row_scope_is_active(q, include_entity_status=False)]
+
     # Run Week 1 analyses
     print("\nRunning search query analysis...")
-    search_analysis = analyze_search_queries(search_queries, keywords)
+    search_analysis = analyze_search_queries(active_search_queries, active_keywords)
 
     print("Generating quality score roadmap...")
-    qs_roadmap = generate_quality_score_roadmap(keywords)
+    qs_roadmap = generate_quality_score_roadmap(active_keywords)
 
     print("Checking conversion value tracking...")
     conv_value_alert = generate_conversion_value_alert(summary)
@@ -57,11 +72,11 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     budget_pacing = analyze_budget_pacing(metrics, monthly_budget=None)  # User can set budget later
 
     print("Analyzing device performance...")
-    device_performance = analyze_device_performance(campaigns, keywords)
+    device_performance = analyze_device_performance(campaigns, active_keywords)
 
     print("Creating landing page heatmap...")
     ads = metrics.get('ads', [])
-    landing_page_heatmap = analyze_landing_page_performance(keywords, ads)
+    landing_page_heatmap = analyze_landing_page_performance(active_keywords, ads)
 
     print("Analyzing geographic performance...")
     geo_data = metrics.get('geo_performance', [])
@@ -104,7 +119,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     # Analyze top performers (require minimum spend for statistical significance)
     # Filter: at least 2 conversions OR min RM 10 spend to avoid single-click flukes
     performing_keywords = sorted(
-        [k for k in keywords if k['conversions'] >= 2 or (k['conversions'] >= 1 and k['cost'] >= 10)],
+        [k for k in active_keywords if k['conversions'] >= 2 or (k['conversions'] >= 1 and k['cost'] >= 10)],
         key=lambda x: x.get('cost_per_conversion', 999)
     )[:5]
 
@@ -132,14 +147,14 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     recommendations = []
 
     def is_enabled_keyword(keyword):
-        return str(keyword.get('status', 'ENABLED')).upper() == 'ENABLED'
+        return str(keyword.get('status', 'ENABLED')).upper() == 'ENABLED' and row_scope_is_active(keyword)
 
     def criterion_resource_name(keyword):
         return keyword.get('resource_name') or ''
 
     # 1. KEYWORD PAUSE RECOMMENDATIONS - for low QS + no conversions
     low_qs_no_conv = [
-        k for k in keywords
+        k for k in active_keywords
         if is_enabled_keyword(k)
         and criterion_resource_name(k)
         and k.get('quality_score', 0) > 0
@@ -169,7 +184,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
 
     # 2. BID INCREASE RECOMMENDATIONS - for top performers
     top_performers = [
-        k for k in keywords
+        k for k in active_keywords
         if is_enabled_keyword(k)
         and criterion_resource_name(k)
         and k['conversions'] >= 2
@@ -207,7 +222,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
 
     # 3. BID DECREASE RECOMMENDATIONS - for high spend, no conversions
     overpriced = [
-        k for k in keywords
+        k for k in active_keywords
         if is_enabled_keyword(k)
         and criterion_resource_name(k)
         and k['conversions'] == 0
@@ -246,7 +261,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
 
     # 4. AD COPY RECOMMENDATIONS - based on top performing ad groups
     ad_group_performance = {}
-    for kw in keywords:
+    for kw in active_keywords:
         ag_name = kw.get('ad_group_name', 'Unknown')
         if ag_name not in ad_group_performance:
             ad_group_performance[ag_name] = {'conversions': 0, 'clicks': 0, 'cost': 0, 'keywords': []}

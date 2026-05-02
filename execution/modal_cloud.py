@@ -570,6 +570,55 @@ def strip_unsupported_revenue_copy(text):
     cleaned = re.sub(r"\s+and\s+revenue", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip(" ,")
 
+def is_inactive_platform_status(status):
+    return normalize_match_value(status) in {"paused", "removed", "deleted", "inactive", "ended", "archived"}
+
+def recommendation_scope_inactive(rec, data):
+    campaign_id = normalize_match_value(rec.get("campaign_id"))
+    campaign = normalize_match_value(rec.get("campaign_name") or rec.get("campaignName"))
+    ad_group = normalize_match_value(rec.get("ad_group_name") or rec.get("adGroupName"))
+    keyword = normalize_match_value(rec.get("keyword"))
+    target = normalize_match_value(rec.get("target_id") or rec.get("ad_group_name") or rec.get("adset_name"))
+
+    for row in data.get("campaigns") or []:
+        row_campaign_id = normalize_match_value(row.get("id") or row.get("campaign_id"))
+        row_campaign = normalize_match_value(row.get("name") or row.get("campaign_name"))
+        if (
+            (campaign_id and row_campaign_id == campaign_id)
+            or (campaign and row_campaign == campaign)
+        ) and is_inactive_platform_status(row.get("status")):
+            return True, "Campaign is paused or inactive in cached Google Ads data."
+
+    rows = []
+    rows.extend(data.get("keywords") or [])
+    rows.extend(data.get("search_queries") or [])
+    rows.extend(data.get("ad_groups") or [])
+    rows.extend(data.get("ad_sets") or [])
+
+    for row in rows:
+        row_campaign_id = normalize_match_value(row.get("campaign_id"))
+        row_campaign = normalize_match_value(row.get("campaign") or row.get("campaign_name") or row.get("name"))
+        row_ad_group = normalize_match_value(row.get("ad_group_name") or row.get("ad_group") or row.get("adset_name"))
+        row_target = normalize_match_value(row.get("resource_name") or row.get("target_id") or row.get("adset_id"))
+        row_keyword = normalize_match_value(row.get("keyword") or row.get("keyword_text") or row.get("search_term"))
+
+        matches_scope = any([
+            campaign_id and row_campaign_id == campaign_id,
+            campaign and row_campaign == campaign,
+            ad_group and row_ad_group == ad_group,
+            target and row_target == target,
+            keyword and row_keyword == keyword,
+        ])
+        if not matches_scope:
+            continue
+
+        if is_inactive_platform_status(row.get("campaign_status")):
+            return True, "Campaign is paused or inactive in cached Google Ads data."
+        if is_inactive_platform_status(row.get("ad_group_status")):
+            return True, "Ad group is paused or inactive in cached Google Ads data."
+
+    return False, None
+
 def platform_state_matches(rec, data):
     action_type = normalize_match_value(rec.get("action_type") or rec.get("type"))
     keyword = normalize_match_value(rec.get("keyword"))
@@ -637,6 +686,13 @@ def apply_recommendation_guardrails(data):
             guardrail_status = "suppressed"
             quality_label = "High confidence"
             reasons.append(state_reason)
+
+        inactive_scope, inactive_reason = recommendation_scope_inactive(rec, data)
+        if inactive_scope:
+            guardrail_status = "suppressed"
+            quality_label = "Insufficient data"
+            automation_allowed = False
+            reasons.append(inactive_reason)
 
         spend = evidence.get("spend")
         clicks = evidence.get("clicks")

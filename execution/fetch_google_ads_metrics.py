@@ -228,8 +228,10 @@ def fetch_keyword_metrics(client, customer_id, start_date, end_date):
         SELECT
             campaign.id,
             campaign.name,
+            campaign.status,
             ad_group.id,
             ad_group.name,
+            ad_group.status,
             ad_group_criterion.keyword.text,
             ad_group_criterion.keyword.match_type,
             ad_group_criterion.quality_info.quality_score,
@@ -264,8 +266,10 @@ def fetch_keyword_metrics(client, customer_id, start_date, end_date):
                 keyword_data = {
                     "campaign_id": row.campaign.id,
                     "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
                     "ad_group_id": row.ad_group.id,
                     "ad_group_name": row.ad_group.name,
+                    "ad_group_status": row.ad_group.status.name,
                     "keyword_id": row.ad_group_criterion.criterion_id,
                     "keyword_text": row.ad_group_criterion.keyword.text,
                     "match_type": row.ad_group_criterion.keyword.match_type.name,
@@ -374,8 +378,10 @@ def fetch_search_query_report(client, customer_id, start_date, end_date):
         SELECT
             campaign.id,
             campaign.name,
+            campaign.status,
             ad_group.id,
             ad_group.name,
+            ad_group.status,
             segments.search_term_match_type,
             search_term_view.search_term,
             search_term_view.status,
@@ -402,8 +408,10 @@ def fetch_search_query_report(client, customer_id, start_date, end_date):
                 query_data = {
                     "campaign_id": row.campaign.id,
                     "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
                     "ad_group_id": row.ad_group.id,
                     "ad_group_name": row.ad_group.name,
+                    "ad_group_status": row.ad_group.status.name,
                     "search_term": row.search_term_view.search_term,
                     "match_type": row.segments.search_term_match_type.name,
                     "status": row.search_term_view.status.name,
