@@ -1034,8 +1034,8 @@ class ApplyRequest(BaseModel):
     recommendation_id: str
     action_type: str
     platform: str
-    impact: str
-    baseline_metrics: dict
+    impact: Optional[str] = None
+    baseline_metrics: Optional[dict] = None
     title: Optional[str] = None
     suggested_action: Optional[str] = None
     target_id: Optional[str] = None
@@ -1047,8 +1047,8 @@ class ApplyRequest(BaseModel):
     quality_label: Optional[str] = None
     confidence_score: Optional[float] = None
     guardrail_status: Optional[str] = None
-    guardrail_reasons: list[str] = Field(default_factory=list)
-    evidence: dict = Field(default_factory=dict)
+    guardrail_reasons: Optional[list[str]] = None
+    evidence: Optional[dict] = None
     expected_impact: Optional[str] = None
     manual: bool = False
     status: Optional[str] = None
@@ -1255,6 +1255,10 @@ def update_tracking_snapshots_impl():
 @modal.fastapi_endpoint(method="POST", label="api-apply")
 def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     require_api_key("ADSPULSE_INTERNAL_API_KEY", x_api_key)
+    baseline_metrics = request.baseline_metrics or {}
+    guardrail_reasons = request.guardrail_reasons or []
+    evidence = request.evidence or {}
+    suggested_action_norm = normalize_match_value(request.suggested_action)
     
     tracking_file = Path("/data/tracking.json")
     tracking_data = []
@@ -1297,7 +1301,7 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
                 res = google_ads_executor.add_negative_keyword(customer_id, request.campaign_id, request.keyword)
                 execution_status = f"Applied: {res.get('status')}"
                 response_status = "applied"
-            elif request.action_type == "keyword_action" and request.suggested_action == "PAUSED" and request.target_id:
+            elif request.action_type == "keyword_action" and suggested_action_norm in {"paused", "pause"} and request.target_id:
                 res = google_ads_executor.pause_ad_group_criterion(customer_id, request.target_id)
                 execution_status = f"Applied: {res.get('status')}"
                 response_status = "applied"
@@ -1336,16 +1340,16 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "client_name": request.client_name,
         "action_type": request.action_type,
         "platform": request.platform,
-        "impact": request.impact,
+        "impact": request.impact or "",
         "quality_label": request.quality_label,
         "confidence_score": request.confidence_score,
         "guardrail_status": request.guardrail_status,
-        "guardrail_reasons": request.guardrail_reasons,
-        "evidence_snapshot": request.evidence,
+        "guardrail_reasons": guardrail_reasons,
+        "evidence_snapshot": evidence,
         "expected_impact": request.expected_impact,
         "title": request.title,
         "applied_at": datetime.now().isoformat(),
-        "baseline_metrics": request.baseline_metrics,
+        "baseline_metrics": baseline_metrics,
         "suggested_action": request.suggested_action,
         "target_id": request.target_id,
         "campaign_id": request.campaign_id,
@@ -1358,9 +1362,9 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "snapshots": {
             "day_0": {
                 "captured_at": datetime.now().isoformat(),
-                "baseline_metrics": request.baseline_metrics,
-                "expected_impact": request.expected_impact or request.baseline_metrics.get("expected_outcome"),
-                "evidence": request.evidence,
+                "baseline_metrics": baseline_metrics,
+                "expected_impact": request.expected_impact or baseline_metrics.get("expected_outcome"),
+                "evidence": evidence,
             }
         }
     }

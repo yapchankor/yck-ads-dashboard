@@ -69,6 +69,29 @@ export function RecommendationCard({
     ? "bg-purple-50 text-purple-700"
     : "bg-teal-50 text-teal-700";
 
+  const getApplyErrorMessage = (result: unknown) => {
+    if (!result || typeof result !== "object") return "Failed to apply recommendation";
+
+    const response = result as {
+      error?: string;
+      execution_status?: string;
+      detail?: string | Array<{ msg?: string }>;
+    };
+
+    if (response.error) return response.error;
+    if (response.execution_status) return response.execution_status;
+    if (typeof response.detail === "string") return response.detail;
+    if (Array.isArray(response.detail)) {
+      const details = response.detail
+        .map((item) => item.msg)
+        .filter(Boolean)
+        .join("; ");
+      if (details) return details;
+    }
+
+    return "Failed to apply recommendation";
+  };
+
   // Shared implementation logic (for both Auto and Manual)
   const recordImplementation = async (isManual: boolean, statusOverride?: "Dismissed") => {
     if (!clientName) {
@@ -90,7 +113,7 @@ export function RecommendationCard({
           platform: rec.platform,
           impact: rec.impact,
           suggested_action: rec.suggestedAction,
-          target_id: rec.target_id || rec.id, 
+          target_id: rec.target_id, 
           campaign_id: rec.campaign_id,
           adset_id: rec.adset_id,
           keyword: rec.keyword,
@@ -129,7 +152,7 @@ export function RecommendationCard({
           setCardStatus("applied");
         }
       } else {
-        setError(result.error || "Failed to apply recommendation");
+        setError(getApplyErrorMessage(result));
         setCardStatus("pending");
       }
     } catch {
