@@ -394,7 +394,6 @@ AUTOMATABLE_ACTION_TYPES = {
     "budget_scaling",
 }
 HIGH_RISK_REVIEW_ACTION_TYPES = {
-    "keyword_action",
     "budget_scaling",
     "budget_adjustment",
     "geo_scaling",
@@ -463,17 +462,16 @@ def infer_recommendation_evidence(rec, data, date_days):
         , safe_number(matched.get("spend"), None)
         , safe_number(matched.get("cost"), None)
         , first_number(r"(?:wasted|spent|spend)\s+(?:rm|myr)?\s*([0-9][0-9,.]*)", description)
-        , first_number(r"(?:rm|myr)\s*([0-9][0-9,.]*)", description)
-    )
-    conversions = first_present(
-        safe_number(rec.get("conversions"), None)
-        , safe_number(matched.get("conversions"), None)
+        , first_number(r"(?:rm|myr)\s*([0-9][0-9,.]*)\s*(?:wasted|spent|spend)", description)
     )
     parsed_conversions = first_number(r"([0-9][0-9,.]*)\s+conversions?", description)
-    if conversions is None and parsed_conversions is not None:
-        conversions = parsed_conversions
-    if conversions is None and re.search(r"\bzero conversions?\b|\b0 conversions?\b", description, re.IGNORECASE):
-        conversions = 0
+    has_zero_conversion_text = re.search(r"\bzero conversions?\b|\b0 conversions?\b", description, re.IGNORECASE)
+    conversions = first_present(
+        safe_number(rec.get("conversions"), None),
+        parsed_conversions,
+        0 if has_zero_conversion_text else None,
+        safe_number(matched.get("conversions"), None),
+    )
 
     clicks = first_present(safe_number(rec.get("clicks"), None), safe_number(matched.get("clicks"), None))
     parsed_clicks = first_number(r"([0-9][0-9,.]*)\s+clicks?", description)
@@ -535,10 +533,8 @@ def platform_average_cpa(data, platform):
 def needs_high_risk_review(action_type, rec, conversions=None):
     action_type_norm = normalize_match_value(action_type)
     if action_type_norm == "bid_adjustment":
-        current_bid = safe_number(rec.get("current_bid"), None)
-        suggested_bid = safe_number(rec.get("suggested_bid"), None)
-        return current_bid is not None and suggested_bid is not None and suggested_bid > current_bid
-    if action_type_norm == "add_negative_keyword":
+        return False
+    if action_type_norm in {"add_negative_keyword", "keyword_action"}:
         return conversions not in (None, 0)
     return action_type_norm in HIGH_RISK_REVIEW_ACTION_TYPES
 
@@ -658,17 +654,24 @@ def apply_recommendation_guardrails(data):
                 guardrail_status = "eligible"
                 automation_allowed = True
 
-        if (action_type_norm in SCALE_ACTION_TYPES or is_bid_increase) and guardrail_status != "suppressed":
+        if is_bid_increase and guardrail_status != "suppressed":
+            if conversions is None or conversions < 2 or spend is None or spend < 10:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Not enough conversion volume for automatic bid increase.")
+            elif confidence_score < 70:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Confidence is below the auto-apply threshold.")
+
+        if action_type_norm in SCALE_ACTION_TYPES and guardrail_status != "suppressed":
             if conversions is None or conversions < 2 or spend is None or spend < 10:
                 guardrail_status = "manual_only"
                 quality_label = downgrade_label(action_type_norm, rec, conversions)
                 automation_allowed = False
                 reasons.append("Not enough conversion volume for automatic scaling.")
-            elif cpa and platform_cpa and cpa > platform_cpa * 1.2:
-                guardrail_status = "manual_only"
-                quality_label = downgrade_label(action_type_norm, rec, conversions)
-                automation_allowed = False
-                reasons.append("CPA is too far above the account average for automatic scaling.")
 
         if action_type_norm == "budget_scaling" and guardrail_status != "suppressed":
             if conversions is None or conversions < 5:
@@ -689,7 +692,13 @@ def apply_recommendation_guardrails(data):
             reasons.append("No safe automated action is available for this recommendation.")
 
         if guardrail_status == "eligible" and automation_allowed:
-            quality_label = "High confidence" if confidence_score >= 70 else "Manual only"
+            if confidence_score >= 70:
+                quality_label = "High confidence"
+            else:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Confidence is below the auto-apply threshold.")
 
         rec["normalized_key"] = normalized_recommendation_key(rec)
         rec["quality_label"] = quality_label
