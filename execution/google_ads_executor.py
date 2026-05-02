@@ -3,6 +3,47 @@ from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.errors import GoogleAdsException
 from google.protobuf import field_mask_pb2
 
+def google_ads_error_response(ex):
+    """Return enough Google Ads API detail to debug apply failures."""
+    code = ex.error.code().name if hasattr(ex, "error") else "UNKNOWN"
+    errors = []
+
+    for error in getattr(ex.failure, "errors", []) or []:
+        field_path = ""
+        if getattr(error, "location", None):
+            field_path = ".".join(
+                element.field_name
+                for element in error.location.field_path_elements
+                if element.field_name
+            )
+        errors.append({
+            "message": error.message,
+            "field_path": field_path,
+            "trigger": str(getattr(error, "trigger", "")),
+            "error_code": str(getattr(error, "error_code", "")),
+        })
+
+    message = "; ".join(
+        f"{err['field_path']}: {err['message']}" if err["field_path"] else err["message"]
+        for err in errors
+        if err["message"]
+    ) or str(ex)
+
+    return {
+        "status": "error",
+        "code": code,
+        "request_id": getattr(ex, "request_id", None),
+        "message": f"Google Ads Error {code}: {message}",
+        "errors": errors,
+    }
+
+def unexpected_error_response(ex):
+    return {
+        "status": "error",
+        "code": type(ex).__name__,
+        "message": f"{type(ex).__name__}: {ex}",
+    }
+
 def load_google_ads_client():
     """Load Google Ads API client from credentials."""
     login_customer_id = os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "").replace("-", "").strip()
@@ -39,7 +80,9 @@ def add_negative_keyword(customer_id, campaign_id, keyword, match_type="PHRASE")
         )
         return {"status": "success", "resource_name": response.results[0].resource_name}
     except GoogleAdsException as ex:
-        return {"status": "error", "message": f"Google Ads Error: {ex.error.code().name}"}
+        return google_ads_error_response(ex)
+    except Exception as ex:
+        return unexpected_error_response(ex)
 
 def pause_ad_group_criterion(customer_id, criterion_resource_name):
     """Execute pausing a specific keyword/criterion."""
@@ -58,7 +101,9 @@ def pause_ad_group_criterion(customer_id, criterion_resource_name):
         )
         return {"status": "success", "resource_name": response.results[0].resource_name}
     except GoogleAdsException as ex:
-        return {"status": "error", "message": f"Google Ads Error: {ex.error.code().name}"}
+        return google_ads_error_response(ex)
+    except Exception as ex:
+        return unexpected_error_response(ex)
 
 def update_bid(customer_id, criterion_resource_name, suggested_bid):
     """Execute updating a CPC bid for a criterion."""
@@ -78,4 +123,6 @@ def update_bid(customer_id, criterion_resource_name, suggested_bid):
         )
         return {"status": "success", "resource_name": response.results[0].resource_name}
     except GoogleAdsException as ex:
-        return {"status": "error", "message": f"Google Ads Error: {ex.error.code().name}"}
+        return google_ads_error_response(ex)
+    except Exception as ex:
+        return unexpected_error_response(ex)

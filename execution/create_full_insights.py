@@ -131,9 +131,22 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     # Generate recommendations
     recommendations = []
 
+    def is_enabled_keyword(keyword):
+        return str(keyword.get('status', 'ENABLED')).upper() == 'ENABLED'
+
+    def criterion_resource_name(keyword):
+        return keyword.get('resource_name') or ''
+
     # 1. KEYWORD PAUSE RECOMMENDATIONS - for low QS + no conversions
-    low_qs_no_conv = [k for k in keywords if k.get('quality_score', 0) > 0 and
-                      k['quality_score'] <= 2 and k['conversions'] == 0 and k['cost'] > 5]
+    low_qs_no_conv = [
+        k for k in keywords
+        if is_enabled_keyword(k)
+        and criterion_resource_name(k)
+        and k.get('quality_score', 0) > 0
+        and k['quality_score'] <= 2
+        and k['conversions'] == 0
+        and k['cost'] > 5
+    ]
     for kw in sorted(low_qs_no_conv, key=lambda x: x['cost'], reverse=True)[:3]:
         # Calculate impact
         impact_data = calculate_exclusion_impact(kw['cost'], conversions=0)
@@ -142,7 +155,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
         recommendations.append({
             "type": "keyword_action",
             "action": "pause",
-            "target": kw.get('resource_name', kw['keyword_text']),
+            "target": criterion_resource_name(kw),
             "keyword": kw['keyword_text'],
             "campaign_name": kw.get('campaign_name', 'Unknown'),
             "ad_group_name": kw.get('ad_group_name', 'Unknown'),
@@ -155,7 +168,13 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
         })
 
     # 2. BID INCREASE RECOMMENDATIONS - for top performers
-    top_performers = [k for k in keywords if k['conversions'] >= 2 and k.get('cost_per_conversion', 999) < 15]
+    top_performers = [
+        k for k in keywords
+        if is_enabled_keyword(k)
+        and criterion_resource_name(k)
+        and k['conversions'] >= 2
+        and k.get('cost_per_conversion', 999) < 15
+    ]
     for kw in sorted(top_performers, key=lambda x: x.get('cost_per_conversion', 999))[:3]:
         # Use actual avg CPC if keyword-level bid is 0 (ad group bidding)
         current_bid = kw.get('cpc_bid_micros', 0) / 1000000
@@ -174,7 +193,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
 
         recommendations.append({
             "type": "bid_adjustment",
-            "target": kw.get('resource_name', kw['keyword_text']),
+            "target": criterion_resource_name(kw),
             "keyword": kw['keyword_text'],
             "campaign_name": kw.get('campaign_name', 'Unknown'),
             "ad_group_name": kw.get('ad_group_name', 'Unknown'),
@@ -187,7 +206,14 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
         })
 
     # 3. BID DECREASE RECOMMENDATIONS - for high spend, no conversions
-    overpriced = [k for k in keywords if k['conversions'] == 0 and k['cost'] > 10 and k.get('quality_score', 0) >= 4]
+    overpriced = [
+        k for k in keywords
+        if is_enabled_keyword(k)
+        and criterion_resource_name(k)
+        and k['conversions'] == 0
+        and k['cost'] > 10
+        and k.get('quality_score', 0) >= 4
+    ]
     for kw in sorted(overpriced, key=lambda x: x['cost'], reverse=True)[:2]:
         # Use actual avg CPC if keyword-level bid is 0 (ad group bidding)
         current_bid = kw.get('cpc_bid_micros', 0) / 1000000
@@ -206,7 +232,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
 
         recommendations.append({
             "type": "bid_adjustment",
-            "target": kw.get('resource_name', kw['keyword_text']),
+            "target": criterion_resource_name(kw),
             "keyword": kw['keyword_text'],
             "campaign_name": kw.get('campaign_name', 'Unknown'),
             "ad_group_name": kw.get('ad_group_name', 'Unknown'),

@@ -208,7 +208,12 @@ def generate_dashboard_data(metrics_file, recs_file, output_file):
         rec_type = rec.get('type', 'review')
 
         # Determine action_type for the frontend
-        if 'negative keyword' in suggested.lower():
+        action_name = str(rec.get('action', '')).lower()
+        if (
+            'negative keyword' in suggested.lower()
+            or action_name in {'add_negative', 'add_negative_keywords'}
+            or rec.get('negative_keywords')
+        ):
             action_type = 'add_negative_keyword'
         elif rec_type == 'keyword_action':
             action_type = 'keyword_action'

@@ -406,6 +406,28 @@ HIGH_RISK_REVIEW_ACTION_TYPES = {
 def normalized_recommendation_key(item):
     return recommendation_match_key(item) or recommendation_fallback_key(item)
 
+def is_google_ad_group_criterion_resource(value):
+    return bool(re.match(r"^customers/\d+/adGroupCriteria/\d+~\d+$", str(value or "")))
+
+def has_required_automation_fields(action_type_norm, rec):
+    if action_type_norm == "add_negative_keyword":
+        return bool(rec.get("campaign_id") and rec.get("keyword"))
+
+    if action_type_norm == "keyword_action":
+        suggested_norm = normalize_match_value(rec.get("suggested_action") or rec.get("suggested"))
+        return suggested_norm in {"paused", "pause"} and is_google_ad_group_criterion_resource(rec.get("target_id"))
+
+    if action_type_norm == "bid_adjustment":
+        return (
+            is_google_ad_group_criterion_resource(rec.get("target_id"))
+            and safe_number(rec.get("suggested_bid"), None) is not None
+        )
+
+    if action_type_norm in {"budget_adjustment", "budget_scaling"}:
+        return bool(rec.get("campaign_id") or rec.get("adset_id"))
+
+    return False
+
 def first_number(pattern, text):
     if not text:
         return None
@@ -549,7 +571,7 @@ def strip_unsupported_revenue_copy(text):
     return cleaned.strip(" ,")
 
 def platform_state_matches(rec, data):
-    action_type = rec.get("action_type") or rec.get("type")
+    action_type = normalize_match_value(rec.get("action_type") or rec.get("type"))
     keyword = normalize_match_value(rec.get("keyword"))
     campaign = normalize_match_value(rec.get("campaign_name") or rec.get("campaignName"))
     target = normalize_match_value(rec.get("target_id") or rec.get("ad_group_name"))
@@ -561,12 +583,16 @@ def platform_state_matches(rec, data):
             if neg_keyword == keyword and (not campaign or not neg_campaign or neg_campaign == campaign):
                 return True, "Negative keyword already exists in cached Google Ads data."
 
-    if action_type == "keyword_action" and normalize_match_value(rec.get("suggested")) == "paused":
+    suggested_norm = normalize_match_value(rec.get("suggested_action") or rec.get("suggested"))
+    if action_type == "keyword_action" and suggested_norm in {"paused", "pause"}:
         for row in data.get("keywords") or []:
             row_target = normalize_match_value(row.get("resource_name") or row.get("target_id"))
             row_keyword = normalize_match_value(row.get("keyword") or row.get("keyword_text"))
+            row_campaign = normalize_match_value(row.get("campaign_name") or row.get("campaign"))
             row_status = normalize_match_value(row.get("status"))
-            if row_status == "paused" and ((target and row_target == target) or (keyword and row_keyword == keyword)):
+            target_matches = target and row_target == target
+            keyword_matches = keyword and row_keyword == keyword and (not campaign or not row_campaign or row_campaign == campaign)
+            if row_status == "paused" and (target_matches or keyword_matches):
                 return True, "Keyword is already paused in cached Google Ads data."
 
     return False, None
@@ -593,7 +619,7 @@ def apply_recommendation_guardrails(data):
         evidence = infer_recommendation_evidence(rec, data, date_days)
         confidence_score = int(max(0, min(100, safe_number(evidence["confidence_inputs"].get("impact_confidence_pct"), 0))))
         automation = rec.get("automation") or {}
-        has_required_ids = bool(rec.get("target_id") or rec.get("campaign_id") or rec.get("adset_id"))
+        has_required_ids = has_required_automation_fields(action_type_norm, rec)
         automation_allowed = bool(
             automation.get("is_automatable", action_type_norm in AUTOMATABLE_ACTION_TYPES)
             and action_type_norm in AUTOMATABLE_ACTION_TYPES
@@ -1257,6 +1283,21 @@ def google_execution_result(action_label: str, result: dict):
     message = result.get("message") or result.get("error") or "Google Ads API returned an error"
     return f"Error: {message}", "error"
 
+def apply_response_payload(response_status, execution_status, tracking_record=None, message=None, execution_result=None):
+    payload = {
+        "status": response_status,
+        "execution_status": execution_status,
+    }
+    if message:
+        payload["message"] = message
+    if tracking_record is not None:
+        payload["tracking_record"] = tracking_record
+    if execution_result is not None:
+        payload["execution_result"] = execution_result
+    if response_status == "error":
+        payload["error"] = execution_status
+    return payload
+
 @app.function(
     image=image,
     secrets=[
@@ -1295,6 +1336,7 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     baseline_metrics = request.baseline_metrics or {}
     guardrail_reasons = [reason for reason in (request_text(r) for r in (request.guardrail_reasons or [])) if reason]
     evidence = request.evidence or {}
+    action_type_norm = normalize_match_value(request.action_type)
     suggested_action_norm = normalize_match_value(request.suggested_action)
     
     tracking_file = Path("/data/tracking.json")
@@ -1327,7 +1369,12 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     matched_records = [record for record in tracking_data if matches_request(record)]
     active_matches = [record for record in matched_records if record.get("status") != "Failed"]
     if active_matches:
-        return {"status": "already_tracking", "message": "This recommendation is already being tracked."}
+        return apply_response_payload(
+            "already_tracking",
+            active_matches[0].get("execution_status", "Already tracked"),
+            tracking_record=active_matches[0],
+            message="This recommendation is already being tracked.",
+        )
 
     if matched_records:
         tracking_data = [record for record in tracking_data if not matches_request(record)]
@@ -1336,9 +1383,10 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     is_dismissal = request.status == "Dismissed"
     execution_status = "Dismissed: user removed recommendation" if is_dismissal else "Manual: recorded"
     response_status = "dismissed" if is_dismissal else ("manual_required" if request.manual else "tracked")
+    execution_result = None
     if is_dismissal or request.manual:
         pass
-    elif request.platform == "Google":
+    elif normalize_match_value(request.platform) == "google":
         try:
             import google_ads_executor
             
@@ -1347,30 +1395,37 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
             client_data = clients.get(request.client_name, {})
             customer_id = client_data.get('customer_id', '').replace('-', '')
 
-            if request.action_type == "add_negative_keyword" and request.campaign_id and request.keyword:
-                res = google_ads_executor.add_negative_keyword(customer_id, request.campaign_id, request.keyword)
-                execution_status, response_status = google_execution_result("negative keyword added", res)
-            elif request.action_type == "keyword_action" and suggested_action_norm in {"paused", "pause"} and request.target_id:
-                res = google_ads_executor.pause_ad_group_criterion(customer_id, request.target_id)
-                execution_status, response_status = google_execution_result("keyword paused", res)
-            elif request.action_type == "bid_adjustment" and request.target_id and request.suggested_bid:
-                res = google_ads_executor.update_bid(customer_id, request.target_id, request.suggested_bid)
-                execution_status, response_status = google_execution_result("bid updated", res)
+            if not customer_id:
+                execution_status = "Error: Missing Google Ads customer ID for this client."
+                response_status = "error"
+            elif action_type_norm == "add_negative_keyword" and request.campaign_id and request.keyword:
+                execution_result = google_ads_executor.add_negative_keyword(customer_id, request.campaign_id, request.keyword)
+                execution_status, response_status = google_execution_result("negative keyword added", execution_result)
+            elif action_type_norm == "keyword_action" and suggested_action_norm in {"paused", "pause"} and is_google_ad_group_criterion_resource(request.target_id):
+                execution_result = google_ads_executor.pause_ad_group_criterion(customer_id, request.target_id)
+                execution_status, response_status = google_execution_result("keyword paused", execution_result)
+            elif action_type_norm == "bid_adjustment" and is_google_ad_group_criterion_resource(request.target_id) and request.suggested_bid:
+                execution_result = google_ads_executor.update_bid(customer_id, request.target_id, request.suggested_bid)
+                execution_status, response_status = google_execution_result("bid updated", execution_result)
             else:
-                execution_status = "Manual: unsupported Google action"
+                execution_status = "Manual: unsupported or incomplete Google action"
                 response_status = "manual_required"
         except Exception as e:
             print(f"Execution Error: {e}")
             execution_status = f"Error: {str(e)}"
             response_status = "error"
-    elif request.platform == "Meta":
+    elif normalize_match_value(request.platform) == "meta":
         try:
             import meta_ads_executor
             
-            if request.action_type in {"budget_adjustment", "budget_scaling"} and request.campaign_id and request.suggested_bid:
-                res = meta_ads_executor.update_budget(request.campaign_id, request.suggested_bid)
-                execution_status = f"Applied: {res.get('status')}"
-                response_status = "applied"
+            if action_type_norm in {"budget_adjustment", "budget_scaling"} and request.campaign_id and request.suggested_bid:
+                execution_result = meta_ads_executor.update_budget(request.campaign_id, request.suggested_bid)
+                if execution_result.get("status") == "success":
+                    execution_status = "Applied: Meta budget updated"
+                    response_status = "applied"
+                else:
+                    execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"
+                    response_status = "error"
             else:
                 execution_status = "Manual: unsupported Meta action"
                 response_status = "manual_required"
@@ -1378,6 +1433,9 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
             print(f"Meta Execution Error: {e}")
             execution_status = f"Meta Error: {str(e)}"
             response_status = "error"
+    else:
+        execution_status = "Manual: unsupported platform action"
+        response_status = "manual_required"
     # -----------------------
 
     # Record the implementation
@@ -1421,8 +1479,16 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     with open(tracking_file, 'w') as f:
         json.dump(tracking_data, f, indent=2)
     volume.commit()
-    
-    return {"status": response_status, "execution_status": execution_status}
+
+    payload = apply_response_payload(
+        response_status,
+        execution_status,
+        tracking_record=new_record,
+        execution_result=execution_result,
+    )
+    if response_status == "error":
+        return JSONResponse(status_code=502, content=payload)
+    return payload
 
 @app.function(
     image=image,

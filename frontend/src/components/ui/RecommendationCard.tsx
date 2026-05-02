@@ -12,6 +12,18 @@ function cn(...inputs: ClassValue[]) {
 
 type CardStatus = "pending" | "applying" | "applied" | "manual_confirmed" | "dismissed";
 
+type ApplyResult = {
+  status?: string;
+  execution_status?: string;
+  message?: string;
+  error?: string;
+  detail?: string | Array<{ loc?: Array<string | number>; msg?: string }>;
+  tracking_record?: {
+    status?: string;
+    execution_status?: string;
+  };
+};
+
 const ACTION_TYPE_LABELS: Record<string, string> = {
   add_negative_keyword: "Add Negative Keyword",
   budget_adjustment: "Budget Adjustment",
@@ -72,11 +84,7 @@ export function RecommendationCard({
   const getApplyErrorMessage = (result: unknown) => {
     if (!result || typeof result !== "object") return "Failed to apply recommendation";
 
-    const response = result as {
-      error?: string;
-      execution_status?: string;
-      detail?: string | Array<{ loc?: Array<string | number>; msg?: string }>;
-    };
+    const response = result as ApplyResult;
 
     if (response.error) return response.error;
     if (response.execution_status) return response.execution_status;
@@ -144,18 +152,40 @@ export function RecommendationCard({
       
       const result = await response.json();
       if (response.ok) {
+        const applyResult = result as ApplyResult;
+        const trackingStatus = applyResult.tracking_record?.status;
+        const hasTrackingRecord = Boolean(applyResult.tracking_record);
+
         if (result.status === "manual_required") {
-          setCardStatus("manual_confirmed");
+          if (trackingStatus === "Tracking" || trackingStatus === "Completed") {
+            setCardStatus("manual_confirmed");
+          } else {
+            setError("Manual action was not recorded in Outcome Tracking.");
+            setCardStatus("pending");
+          }
         } else if (result.status === "dismissed") {
-          setCardStatus("dismissed");
+          if (trackingStatus === "Dismissed") {
+            setCardStatus("dismissed");
+          } else {
+            setError("Dismissal was not recorded in Outcome Tracking.");
+            setCardStatus("pending");
+          }
         } else if (result.status === "error") {
           setError(result.execution_status || "Execution failed");
           setCardStatus("pending");
         } else if (result.status === "already_tracking") {
           setError(result.message || "This recommendation is already in Outcome Tracking.");
           setCardStatus("pending");
+        } else if ((result.status === "applied" || result.status === "tracked") && hasTrackingRecord) {
+          if (trackingStatus === "Tracking" || trackingStatus === "Completed") {
+            setCardStatus("applied");
+          } else {
+            setError(applyResult.tracking_record?.execution_status || "Action was not recorded as tracking.");
+            setCardStatus("pending");
+          }
         } else {
-          setCardStatus("applied");
+          setError("Apply response did not include a valid tracking record.");
+          setCardStatus("pending");
         }
       } else {
         setError(getApplyErrorMessage(result));

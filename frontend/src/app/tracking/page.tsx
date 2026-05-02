@@ -238,12 +238,12 @@ export default function TrackingPage() {
                         {item.execution_status && (
                           <div className={cn(
                             "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter w-fit",
-                            item.execution_status.toLowerCase().includes("applied: success") ? "bg-green-50 text-green-700 border border-green-200" :
+                            item.execution_status.toLowerCase().startsWith("applied") ? "bg-green-50 text-green-700 border border-green-200" :
                             item.execution_status.includes("Manual") ? "bg-amber-50 text-amber-700 border border-amber-200" :
                             item.execution_status.includes("Error") ? "bg-red-50 text-red-700 border border-red-200" :
                             "bg-gray-50 text-gray-700 border border-gray-200"
                           )}>
-                            {item.execution_status.toLowerCase().includes("applied: success") ? <CheckCircle2 className="w-2.5 h-2.5" /> : 
+                            {item.execution_status.toLowerCase().startsWith("applied") ? <CheckCircle2 className="w-2.5 h-2.5" /> : 
                              item.execution_status.includes("Manual") ? <Wrench className="w-2.5 h-2.5" /> :
                              <AlertCircle className="w-2.5 h-2.5" />}
                             {item.execution_status}
