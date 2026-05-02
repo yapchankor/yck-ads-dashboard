@@ -17,7 +17,7 @@ import re
 import sys
 import base64
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # ============================================================================
 # MODAL APP CONFIGURATION
@@ -1030,28 +1030,28 @@ from pydantic import BaseModel, Field
 web_app = FastAPI()
 
 class ApplyRequest(BaseModel):
-    client_name: str
-    recommendation_id: str
-    action_type: str
-    platform: str
-    impact: Optional[str] = None
+    client_name: Any
+    recommendation_id: Any
+    action_type: Any
+    platform: Any
+    impact: Any = None
     baseline_metrics: Optional[dict] = None
-    title: Optional[str] = None
-    suggested_action: Optional[str] = None
-    target_id: Optional[str] = None
-    campaign_id: Optional[str] = None
-    keyword: Optional[str] = None
+    title: Any = None
+    suggested_action: Any = None
+    target_id: Any = None
+    campaign_id: Any = None
+    keyword: Any = None
     suggested_bid: Optional[float] = None
-    adset_id: Optional[str] = None
-    normalized_key: Optional[str] = None
-    quality_label: Optional[str] = None
+    adset_id: Any = None
+    normalized_key: Any = None
+    quality_label: Any = None
     confidence_score: Optional[float] = None
-    guardrail_status: Optional[str] = None
-    guardrail_reasons: Optional[list[str]] = None
+    guardrail_status: Any = None
+    guardrail_reasons: Optional[list[Any]] = None
     evidence: Optional[dict] = None
-    expected_impact: Optional[str] = None
+    expected_impact: Any = None
     manual: bool = False
-    status: Optional[str] = None
+    status: Any = None
 
 class EmailSettingsRequest(BaseModel):
     client_name: str
@@ -1094,6 +1094,13 @@ def safe_number(value, default=0):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+def request_text(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
 
 def summarize_cached_metrics(client_data: dict):
     """Build a compact current-performance snapshot from cached volume data."""
@@ -1255,8 +1262,31 @@ def update_tracking_snapshots_impl():
 @modal.fastapi_endpoint(method="POST", label="api-apply")
 def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     require_api_key("ADSPULSE_INTERNAL_API_KEY", x_api_key)
+    request.client_name = request_text(request.client_name) or ""
+    request.recommendation_id = request_text(request.recommendation_id) or ""
+    request.action_type = request_text(request.action_type) or ""
+    request.platform = request_text(request.platform) or ""
+    request.impact = request_text(request.impact) or ""
+    request.title = request_text(request.title)
+    request.suggested_action = request_text(request.suggested_action)
+    request.target_id = request_text(request.target_id)
+    request.campaign_id = request_text(request.campaign_id)
+    request.keyword = request_text(request.keyword)
+    request.adset_id = request_text(request.adset_id)
+    request.normalized_key = request_text(request.normalized_key)
+    request.quality_label = request_text(request.quality_label)
+    request.guardrail_status = request_text(request.guardrail_status)
+    request.expected_impact = request_text(request.expected_impact)
+    request.status = request_text(request.status)
+
+    if not request.client_name or not request.recommendation_id or not request.action_type or not request.platform:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing required recommendation apply fields: client_name, recommendation_id, action_type, and platform are required.",
+        )
+
     baseline_metrics = request.baseline_metrics or {}
-    guardrail_reasons = request.guardrail_reasons or []
+    guardrail_reasons = [reason for reason in (request_text(r) for r in (request.guardrail_reasons or [])) if reason]
     evidence = request.evidence or {}
     suggested_action_norm = normalize_match_value(request.suggested_action)
     

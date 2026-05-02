@@ -75,7 +75,7 @@ export function RecommendationCard({
     const response = result as {
       error?: string;
       execution_status?: string;
-      detail?: string | Array<{ msg?: string }>;
+      detail?: string | Array<{ loc?: Array<string | number>; msg?: string }>;
     };
 
     if (response.error) return response.error;
@@ -83,7 +83,10 @@ export function RecommendationCard({
     if (typeof response.detail === "string") return response.detail;
     if (Array.isArray(response.detail)) {
       const details = response.detail
-        .map((item) => item.msg)
+        .map((item) => {
+          const location = item.loc?.slice(1).join(".");
+          return location && item.msg ? `${location}: ${item.msg}` : item.msg;
+        })
         .filter(Boolean)
         .join("; ");
       if (details) return details;
