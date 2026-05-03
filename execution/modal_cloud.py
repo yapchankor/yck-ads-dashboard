@@ -2119,12 +2119,16 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
     
     latest_metrics = max(metrics_files, key=os.path.getmtime)
     recs_file = latest_metrics.replace('metrics', 'recommendations')
-    
+    insights_file = latest_metrics.replace('metrics', 'insights')
+
     try:
         with open(latest_metrics, 'r') as f:
             google_data = json.load(f)
 
-        data = generate_dashboard_data.generate_dashboard_data(latest_metrics, recs_file, '/tmp/db.json')
+        data = generate_dashboard_data.generate_dashboard_data(
+            latest_metrics, recs_file, '/tmp/db.json',
+            insights_file if os.path.exists(insights_file) else None
+        )
         data['client_name'] = client_name
         data['account_name'] = client_data.get('account_name') or client_data.get('description') or client_name
         data['customer_id'] = client_data.get('customer_id')
