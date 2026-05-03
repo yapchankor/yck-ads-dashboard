@@ -58,6 +58,80 @@ function SectionCard({ title, description, children }: { title: string; descript
 
 type TableRow = Record<string, any>;
 
+type TablePreset = "top_spenders" | "has_conversions" | "no_conversions" | "all";
+
+const PRESET_LABELS: Record<TablePreset, string> = {
+  top_spenders: "Top Spenders",
+  has_conversions: "Has Conversions",
+  no_conversions: "Spending, No Conv",
+  all: "All",
+};
+
+function filterAndSortRows(rows: any[], preset: TablePreset, search: string, nameKey: string): any[] {
+  const costOf = (r: any) => Number(r.cost ?? r.spend ?? 0);
+  const filtered = rows.filter((row) => {
+    const status = String(row.status || "").toUpperCase();
+    const isActive = status === "ENABLED" || status === "ACTIVE";
+    const cost = costOf(row);
+    const conv = Number(row.conversions || 0);
+
+    if (preset === "top_spenders" && (!isActive || cost <= 0)) return false;
+    if (preset === "has_conversions" && (!isActive || conv <= 0)) return false;
+    if (preset === "no_conversions" && (!isActive || cost <= 0 || conv > 0)) return false;
+
+    if (search) {
+      const term = search.toLowerCase();
+      const name = String(row[nameKey] || "").toLowerCase();
+      if (!name.includes(term)) return false;
+    }
+    return true;
+  });
+  if (preset !== "all") filtered.sort((a, b) => costOf(b) - costOf(a));
+  return filtered;
+}
+
+function TableFilterBar({
+  preset, setPreset, search, setSearch, totalCount, filteredCount, searchPlaceholder = "Search...",
+}: {
+  preset: TablePreset;
+  setPreset: (p: TablePreset) => void;
+  search: string;
+  setSearch: (s: string) => void;
+  totalCount: number;
+  filteredCount: number;
+  searchPlaceholder?: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-b border-border/60 bg-surface-hover/30">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex bg-surface border border-border/60 rounded-lg p-0.5 shadow-sm">
+          {(Object.keys(PRESET_LABELS) as TablePreset[]).map((p) => (
+            <button
+              key={p}
+              onClick={() => setPreset(p)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${
+                preset === p ? "bg-accent-lime text-accent-primary shadow-sm" : "text-text-muted hover:text-foreground"
+              }`}
+            >
+              {PRESET_LABELS[p]}
+            </button>
+          ))}
+        </div>
+        <input
+          type="text"
+          placeholder={searchPlaceholder}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="px-3 py-1.5 text-xs border border-border/60 bg-background rounded-lg w-56 focus:outline-none focus:border-accent-lime"
+        />
+      </div>
+      <p className="text-xs text-text-muted">
+        Showing <span className="font-bold text-foreground">{filteredCount}</span> of {totalCount}
+      </p>
+    </div>
+  );
+}
+
 function DetailTable({ headers, rows }: {
   headers: { label: string; key: string; align?: "left" | "right"; render?: (v: any, row: TableRow) => React.ReactNode }[];
   rows: TableRow[];
@@ -140,6 +214,9 @@ export default function GoogleAdsPage() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [ignoredQueries, setIgnoredQueries] = useState<Set<string>>(new Set());
   const [queryActions, setQueryActions] = useState<Record<string, "applying" | "applied" | "error">>({});
+  const [keywordFilter, setKeywordFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
+  const [queryFilter, setQueryFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
+  const [adGroupFilter, setAdGroupFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
 
   useEffect(() => {
     try {
@@ -161,7 +238,15 @@ export default function GoogleAdsPage() {
       const res = await fetch("/api/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action_type: "add_negative_keyword", keyword, campaign_id: campaignId, match_type: matchType }),
+        body: JSON.stringify({
+          action_type: "add_negative_keyword",
+          platform: "google",
+          client_name: d?.client_name,
+          recommendation_id: null,
+          keyword,
+          campaign_id: campaignId,
+          match_type: matchType,
+        }),
       });
       if (!res.ok) throw new Error();
       setQueryActions(prev => ({ ...prev, [key]: "applied" }));
@@ -320,6 +405,10 @@ export default function GoogleAdsPage() {
   );
   const withConversionsG = activeCampaignsG.filter((c: any) => c.conversions > 0);
   const withoutConversionsG = activeCampaignsG.filter((c: any) => c.conversions === 0 && c.spend > 0);
+
+  const filteredKeywords = filterAndSortRows(keywords, keywordFilter.preset, keywordFilter.search, "keyword");
+  const filteredSearchQueries = filterAndSortRows(searchQueries, queryFilter.preset, queryFilter.search, "query");
+  const filteredAdGroups = filterAndSortRows(adGroups, adGroupFilter.preset, adGroupFilter.search, "ad_group_name");
 
   return (
     <DashboardLayout>
@@ -536,6 +625,15 @@ export default function GoogleAdsPage() {
 
         {adGroups.length > 0 && (
           <SectionCard title={`Ad Group Performance (${adGroups.length})`} description="Ad group evidence for budget, keyword, and ad-copy decisions.">
+            <TableFilterBar
+              preset={adGroupFilter.preset}
+              setPreset={(p) => setAdGroupFilter({ ...adGroupFilter, preset: p })}
+              search={adGroupFilter.search}
+              setSearch={(s) => setAdGroupFilter({ ...adGroupFilter, search: s })}
+              totalCount={adGroups.length}
+              filteredCount={filteredAdGroups.length}
+              searchPlaceholder="Search ad groups..."
+            />
             <DetailTable
               headers={[
                 { label: "Ad Group", key: "ad_group_name" },
@@ -547,7 +645,7 @@ export default function GoogleAdsPage() {
                 { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
                 { label: "CPA", key: "cpa", align: "right", render: (v) => fmtMaybeMYR(v) },
               ]}
-              rows={adGroups}
+              rows={filteredAdGroups}
             />
           </SectionCard>
         )}
@@ -555,6 +653,15 @@ export default function GoogleAdsPage() {
         {/* ── Keywords ── */}
         {keywords.length > 0 && (
           <SectionCard title={`Keywords (${keywords.length})`} description="Keyword-level performance including Quality Scores.">
+            <TableFilterBar
+              preset={keywordFilter.preset}
+              setPreset={(p) => setKeywordFilter({ ...keywordFilter, preset: p })}
+              search={keywordFilter.search}
+              setSearch={(s) => setKeywordFilter({ ...keywordFilter, search: s })}
+              totalCount={keywords.length}
+              filteredCount={filteredKeywords.length}
+              searchPlaceholder="Search keywords..."
+            />
             <DetailTable
               headers={[
                 { label: "Keyword", key: "keyword" },
@@ -573,7 +680,7 @@ export default function GoogleAdsPage() {
                   : <span className="text-text-muted">—</span>
                 },
               ]}
-              rows={keywords}
+              rows={filteredKeywords}
             />
           </SectionCard>
         )}
@@ -581,6 +688,15 @@ export default function GoogleAdsPage() {
         {/* ── Search Query Performance ── */}
         {searchQueries.length > 0 && (
           <SectionCard title={`Search Query Report (${searchQueries.length} queries)`} description="Actual search terms that triggered your ads.">
+            <TableFilterBar
+              preset={queryFilter.preset}
+              setPreset={(p) => setQueryFilter({ ...queryFilter, preset: p })}
+              search={queryFilter.search}
+              setSearch={(s) => setQueryFilter({ ...queryFilter, search: s })}
+              totalCount={searchQueries.length}
+              filteredCount={filteredSearchQueries.length}
+              searchPlaceholder="Search queries..."
+            />
             <DetailTable
               headers={[
                 { label: "Search Query", key: "query" },
@@ -595,7 +711,7 @@ export default function GoogleAdsPage() {
                 { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
                 { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
               ]}
-              rows={searchQueries}
+              rows={filteredSearchQueries}
             />
           </SectionCard>
         )}

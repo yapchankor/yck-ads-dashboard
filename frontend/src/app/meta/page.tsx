@@ -367,6 +367,66 @@ export default function MetaAdsPage() {
     cpa: metaCPA,
   });
 
+  function classifyMetaCampaign(allCampaigns: any[], row: any): { text: string; color: string } | null {
+    const isActive = row.status === "Active" || String(row.status || "").toUpperCase() === "ACTIVE";
+    if (!isActive) return null;
+    const withConv = allCampaigns.filter((c: any) => (c.conversions || 0) > 0 && (c.spend || 0) > 0);
+    const avg = withConv.length > 0 ? withConv.reduce((s: number, c: any) => s + (c.cpa || 0), 0) / withConv.length : 0;
+    if ((row.spend || 0) > 20 && (row.conversions || 0) === 0) return { text: "Spending, no conversions", color: "bg-red-100 text-red-700" };
+    if (avg > 0 && (row.conversions || 0) >= 2 && (row.cpa || 0) <= avg * 0.75) return { text: "Top performer", color: "bg-green-100 text-green-700" };
+    if (avg > 0 && (row.cpa || 0) > avg * 1.5) return { text: "High CPA", color: "bg-amber-100 text-amber-700" };
+    if ((row.frequency || 0) >= 3.5) return { text: "Creative fatigue risk", color: "bg-amber-100 text-amber-700" };
+    return null;
+  }
+
+  const metaAnomalyAlerts: { severity: "warn" | "critical"; title: string; message: string; action?: string }[] = [];
+  const mZeroConvActive = metaCampaigns.filter((c: any) =>
+    (c.status === "Active" || String(c.status || "").toUpperCase() === "ACTIVE") && (c.spend || 0) > 50 && (c.conversions || 0) === 0
+  );
+  if (mZeroConvActive.length > 0) {
+    const wastedSpend = mZeroConvActive.reduce((s: number, c: any) => s + (c.spend || 0), 0);
+    metaAnomalyAlerts.push({
+      severity: wastedSpend > 300 ? "critical" : "warn",
+      title: `${mZeroConvActive.length} active Meta campaign${mZeroConvActive.length > 1 ? "s" : ""} spending with zero conversions`,
+      message: `${fmtMYR(wastedSpend)} spent with no tracked Meta conversions.`,
+      action: "Review pixel events, campaign objective, and audience targeting — or pause underperformers.",
+    });
+  }
+  const mHighCpaC = metaCampaigns.filter((c: any) => (c.conversions || 0) > 0 && metaCPA > 0 && (c.cpa || 0) > metaCPA * 2);
+  if (mHighCpaC.length > 0) {
+    metaAnomalyAlerts.push({
+      severity: "warn",
+      title: `CPA spike: ${mHighCpaC.length} Meta campaign${mHighCpaC.length > 1 ? "s" : ""} above 2× blended CPA`,
+      message: `${mHighCpaC.map((c: any) => c.name || c.campaign_name).join(", ")} — significantly above blended CPA of ${fmtMYR(metaCPA)}.`,
+      action: "Review creative fatigue, audience overlap, and bid strategy.",
+    });
+  }
+  if (metaSpend > 200 && metaConversions === 0) {
+    metaAnomalyAlerts.push({
+      severity: "critical",
+      title: "No Meta conversions tracked",
+      message: `${fmtMYR(metaSpend)} spent across all Meta campaigns with zero conversions recorded.`,
+      action: "Verify Meta pixel events, conversion API setup, and attribution window immediately.",
+    });
+  }
+  const fatiguedCampaigns = metaCampaigns.filter((c: any) =>
+    (c.status === "Active" || String(c.status || "").toUpperCase() === "ACTIVE") && (c.frequency || 0) >= 4
+  );
+  if (fatiguedCampaigns.length > 0) {
+    metaAnomalyAlerts.push({
+      severity: "warn",
+      title: `Creative fatigue risk: ${fatiguedCampaigns.length} campaign${fatiguedCampaigns.length > 1 ? "s" : ""} with frequency ≥ 4`,
+      message: `${fatiguedCampaigns.map((c: any) => `${c.name || c.campaign_name} (${Number(c.frequency || 0).toFixed(1)}x)`).join(", ")}.`,
+      action: "Refresh creative assets to avoid CPA inflation from over-exposure.",
+    });
+  }
+
+  const activeCampaignsM = metaCampaigns.filter((c: any) =>
+    c.status === "Active" || String(c.status || "").toUpperCase() === "ACTIVE"
+  );
+  const withConversionsM = activeCampaignsM.filter((c: any) => (c.conversions || 0) > 0);
+  const withoutConversionsM = activeCampaignsM.filter((c: any) => (c.conversions || 0) === 0 && (c.spend || 0) > 0);
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-6 pb-10">
@@ -404,6 +464,18 @@ export default function MetaAdsPage() {
           { label: "Best Placement", value: bestPlacement ? bestPlacement.placement_name.split(" - ")[1] || bestPlacement.placement_name : "—", sub: bestPlacement ? `CPA ${fmtMYR(bestPlacement.cpa)}` : undefined },
         ]} />
 
+        {metaAnomalyAlerts.length > 0 && (
+          <div className="flex flex-col gap-2">
+            {metaAnomalyAlerts.map((alert, i) => (
+              <div key={i} className={`rounded-xl border px-4 py-3 ${alert.severity === "critical" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}>
+                <p className={`text-sm font-bold ${alert.severity === "critical" ? "text-red-700" : "text-amber-800"}`}>{alert.title}</p>
+                <p className={`text-xs mt-0.5 ${alert.severity === "critical" ? "text-red-600" : "text-amber-700"}`}>{alert.message}</p>
+                {alert.action && <p className={`text-xs mt-1 font-semibold ${alert.severity === "critical" ? "text-red-700" : "text-amber-800"}`}>→ {alert.action}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* ── AI Insights ── */}
         {metaInsights.length > 0 && (
           <SectionCard title="AI Insights Summary">
@@ -438,7 +510,15 @@ export default function MetaAdsPage() {
         <SectionCard title="Campaign Performance">
           <DetailTable
             headers={[
-              { label: "Campaign", key: "name" },
+              { label: "Campaign", key: "name", render: (v, row) => {
+                const label = classifyMetaCampaign(metaCampaigns, row);
+                return (
+                  <div>
+                    <p className="font-semibold text-foreground">{v}</p>
+                    {label && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 inline-block ${label.color}`}>{label.text}</span>}
+                  </div>
+                );
+              }},
               { label: "Status", key: "status", render: (v) => <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${v === "Active" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{v}</span> },
               { label: "Objective", key: "objective" },
               { label: "Spend", key: "spend", align: "right", render: (v) => <span className="font-medium">{fmtMYR(v)}</span> },
@@ -524,6 +604,40 @@ export default function MetaAdsPage() {
               ]}
               rows={geoMeta}
             />
+          </SectionCard>
+        )}
+
+        {/* ── Conversion Tracking Health ── */}
+        {activeCampaignsM.length > 0 && (
+          <SectionCard title="Conversion Tracking Health" description="Which active Meta campaigns are recording conversions — a broken pixel is often the real problem.">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Active Campaigns</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{activeCampaignsM.length}</p>
+              </div>
+              <div className={`rounded-xl border p-4 ${withConversionsM.length > 0 ? "border-green-200 bg-green-50" : "border-border/60 bg-surface-hover"}`}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Tracking Conversions</p>
+                <p className={`mt-1 text-xl font-bold ${withConversionsM.length > 0 ? "text-green-700" : "text-text-muted"}`}>{withConversionsM.length}</p>
+              </div>
+              <div className={`rounded-xl border p-4 ${withoutConversionsM.length > 0 ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">No Conversions Tracked</p>
+                <p className={`mt-1 text-xl font-bold ${withoutConversionsM.length > 0 ? "text-amber-600" : "text-green-700"}`}>{withoutConversionsM.length}</p>
+              </div>
+            </div>
+            {withoutConversionsM.length > 0 && (
+              <div className="border-t border-border/60">
+                <DetailTable
+                  headers={[
+                    { label: "Campaign", key: "name" },
+                    { label: "Status", key: "status", render: (v) => <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${v === "Active" || String(v || "").toUpperCase() === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{v}</span> },
+                    { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                    { label: "Conversions", key: "conversions", align: "right", render: (v) => <span className="text-amber-600 font-bold">{v}</span> },
+                  ]}
+                  rows={withoutConversionsM}
+                />
+              </div>
+            )}
           </SectionCard>
         )}
 
