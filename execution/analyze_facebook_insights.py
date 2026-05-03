@@ -127,6 +127,10 @@ def analyze_creative_fatigue(ads, campaigns):
         if fatigue_level != 'healthy':
             fatigued_ads.append({
                 'ad_name': ad.get('ad_name', ''),
+                'ad_id': ad.get('ad_id', ''),
+                'adset_id': ad.get('adset_id', ''),
+                'adset_name': ad.get('adset_name', ''),
+                'campaign_id': ad.get('campaign_id', ''),
                 'campaign_name': ad.get('campaign_name', ''),
                 'frequency': frequency,
                 'ctr': ctr,
@@ -393,6 +397,9 @@ def analyze_geo_performance(geo_data):
             cpa = spend / conversions
             top_locations.append({
                 'location': geo.get('location_name', ''),
+                'country': geo.get('country', ''),
+                'region': geo.get('region', ''),
+                'region_key': geo.get('region_key'),
                 'spend': round(spend, 2),
                 'conversions': conversions,
                 'cpa': round(cpa, 2),
@@ -401,6 +408,9 @@ def analyze_geo_performance(geo_data):
         elif spend > 5 and clicks > 5:
             poor_locations.append({
                 'location': geo.get('location_name', ''),
+                'country': geo.get('country', ''),
+                'region': geo.get('region', ''),
+                'region_key': geo.get('region_key'),
                 'spend': round(spend, 2),
                 'clicks': clicks,
                 'issue': 'Zero conversions',
@@ -521,6 +531,9 @@ def analyze_top_performers(campaigns, ad_sets):
         conversions = camp.get('conversions', 0)
         clicks = camp.get('clicks', 0)
         daily_budget = camp.get('daily_budget', 0)
+        lifetime_budget = camp.get('lifetime_budget', 0)
+        current_budget = lifetime_budget or daily_budget
+        budget_basis = 'lifetime' if lifetime_budget else ('daily' if daily_budget else None)
 
         if spend < 10 or clicks < 10:
             continue
@@ -535,8 +548,9 @@ def analyze_top_performers(campaigns, ad_sets):
                 'level': 'campaign',
                 'spend': round(spend, 2),
                 'daily_budget': daily_budget,
-                'current_budget': daily_budget,
-                'budget_basis': 'daily' if daily_budget else None,
+                'lifetime_budget': lifetime_budget,
+                'current_budget': current_budget,
+                'budget_basis': budget_basis,
                 'conversions': conversions,
                 'clicks': clicks,
                 'cpa': round(cpa, 2),
@@ -561,6 +575,9 @@ def analyze_top_performers(campaigns, ad_sets):
         conversions = adset.get('conversions', 0)
         clicks = adset.get('clicks', 0)
         daily_budget = adset.get('daily_budget', 0)
+        lifetime_budget = adset.get('lifetime_budget', 0)
+        current_budget = lifetime_budget or daily_budget
+        budget_basis = 'lifetime' if lifetime_budget else ('daily' if daily_budget else None)
 
         if spend < 10 or clicks < 5:
             continue
@@ -576,8 +593,9 @@ def analyze_top_performers(campaigns, ad_sets):
                 'campaign': adset.get('campaign_name', ''),
                 'spend': round(spend, 2),
                 'daily_budget': daily_budget,
-                'current_budget': daily_budget,
-                'budget_basis': 'daily' if daily_budget else None,
+                'lifetime_budget': lifetime_budget,
+                'current_budget': current_budget,
+                'budget_basis': budget_basis,
                 'conversions': conversions,
                 'clicks': clicks,
                 'cpa': round(cpa, 2),
@@ -933,6 +951,9 @@ def analyze_geo_bid_opportunities(geo_data):
             if cpa < avg_cpa * 0.8:
                 scale_locations.append({
                     'location': location,
+                    'country': geo.get('country', ''),
+                    'region': geo.get('region', ''),
+                    'region_key': geo.get('region_key'),
                     'spend': round(spend, 2),
                     'conversions': conversions,
                     'cpa': round(cpa, 2),
@@ -942,6 +963,9 @@ def analyze_geo_bid_opportunities(geo_data):
         elif spend > 10 and clicks > 5:
             cut_locations.append({
                 'location': location,
+                'country': geo.get('country', ''),
+                'region': geo.get('region', ''),
+                'region_key': geo.get('region_key'),
                 'spend': round(spend, 2),
                 'clicks': clicks,
                 'issue': 'Zero conversions',

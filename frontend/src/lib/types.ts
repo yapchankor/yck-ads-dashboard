@@ -35,8 +35,18 @@ export type Recommendation = {
   isManualOnly?: boolean;
   campaign_id?: string;
   adset_id?: string;
+  ad_id?: string;
+  ad_name?: string;
   target_id?: string;
   normalized_key?: string;
+  segment?: string;
+  segment_type?: string;
+  placement?: string;
+  location?: string;
+  location_key?: string;
+  location_type?: string;
+  best_hours?: Array<string | number>;
+  wasted_days?: string[];
   current_bid?: number;
   suggested_bid?: number;
   current_budget?: number;

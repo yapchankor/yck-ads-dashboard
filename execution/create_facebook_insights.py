@@ -130,9 +130,13 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
         top_adset = max(active_adsets, key=lambda x: (x.get('conversions', 0), x.get('spend', 0)))
         top_adset_id = top_adset.get('adset_id')
         top_adset_name = top_adset.get('adset_name')
+        top_adset_current_budget = top_adset.get('lifetime_budget') or top_adset.get('daily_budget') or 0
+        top_adset_budget_basis = 'lifetime' if top_adset.get('lifetime_budget') else ('daily' if top_adset.get('daily_budget') else None)
     else:
         top_adset_id = None
         top_adset_name = None
+        top_adset_current_budget = 0
+        top_adset_budget_basis = None
 
     # 1. Audience exclusion recommendations
     for seg in audience_analysis.get('wasted_segments', [])[:3]:
@@ -175,6 +179,10 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
             'expected_impact': f"+{impact_data['ctr_improvement_pct']}% CTR, +{impact_data.get('additional_conversions_monthly', 0):.1f} conversions/month ({impact_data['confidence_pct']}% confidence)",
             'priority': 'high' if severity == 'critical' else 'medium',
             'ad_name': ad['ad_name'],
+            'ad_id': ad.get('ad_id'),
+            'adset_id': ad.get('adset_id'),
+            'adset_name': ad.get('adset_name'),
+            'campaign_id': ad.get('campaign_id'),
             'campaign_name': ad.get('campaign_name', ''),
             'impact_data': impact_data,
             'automation': automation,
@@ -251,7 +259,11 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
             'location': loc['location'],
             'adset_id': top_adset_id,  # Added for automation
             'adset_name': top_adset_name,  # Fallback for ID lookup
+            'region': loc.get('region'),
+            'country': loc.get('country'),
             'region_key': loc.get('region_key'),  # Location ID if available
+            'location_key': loc.get('region_key'),
+            'location_type': 'region' if loc.get('region_key') else None,
             'impact_data': impact_data,
             'automation': automation,
         }
@@ -282,6 +294,8 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 'priority': 'medium',
                 'adset_id': top_adset_id,  # Added for automation
                 'adset_name': top_adset_name,  # Fallback for ID lookup
+                'current_budget': top_adset_current_budget,
+                'budget_basis': top_adset_budget_basis,
                 'best_hours': peak_hours if peak_hours else [int(best_hour.get('hour', best_hour.get('hour_label', '').split(':')[0]))],
                 'impact_data': impact_data,
                 'automation': automation,
@@ -298,7 +312,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 scale_factor=1.25
             )
             automation = get_automation_metadata('budget_scaling', platform='facebook')
-            current_budget = candidate.get('current_budget') or candidate.get('daily_budget') or 0
+            current_budget = candidate.get('current_budget') or candidate.get('daily_budget') or candidate.get('lifetime_budget') or 0
             suggested_budget = round(current_budget * 1.25, 2) if current_budget else None
 
             rec = {
@@ -384,6 +398,10 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 'reason': f"{currency} {total_wasted:,.2f} spent on zero-conversion days ({day_names}).",
                 'expected_impact': f"Save {currency} {impact_data['monthly_savings']:,.2f}/month + {impact_data['additional_conversions_monthly']:.1f} more conversions ({impact_data['confidence_pct']}% confidence)",
                 'priority': 'medium',
+                'adset_id': top_adset_id,
+                'adset_name': top_adset_name,
+                'current_budget': top_adset_current_budget,
+                'budget_basis': top_adset_budget_basis,
                 'impact_data': impact_data,
                 'automation': automation,
                 'wasted_days': [d['day'] for d in wasted_days[:3]],
@@ -513,6 +531,8 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 'expected_impact': f"+{impact_data['additional_conversions_monthly']:.1f} conversions/month at {currency} {loc['cpa']:,.2f} CPA ({impact_data['confidence_pct']}% confidence)",
                 'priority': 'medium',
                 'location': loc['location'],
+                'region': loc.get('region'),
+                'country': loc.get('country'),
                 'impact_data': impact_data,
                 'automation': automation,
             }

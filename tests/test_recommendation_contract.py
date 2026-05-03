@@ -254,6 +254,151 @@ class RecommendationContractTests(unittest.TestCase):
 
         self.assertEqual(recommendations, [])
 
+    def test_meta_placement_exclusion_with_required_fields_can_auto_apply(self):
+        recommendations = guarded_recommendations(
+            [
+                {
+                    "action_type": "placement_exclusion",
+                    "platform": "Meta",
+                    "title": "Remove placement: Instagram - Stories",
+                    "description": "Spent RM 18.00 with zero conversions on Instagram - Stories.",
+                    "placement": "Instagram - Stories",
+                    "adset_id": "adset-1",
+                    "spend": 18,
+                    "clicks": 12,
+                    "conversions": 0,
+                    "impact_data": {"confidence_pct": 90},
+                    "automation": {"is_automatable": True},
+                }
+            ],
+            campaigns=[{"platform": "Meta", "name": "Campaign A", "status": "ACTIVE"}],
+        )
+
+        self.assertEqual(len(recommendations), 1)
+        self.assertEqual(recommendations[0]["guardrail_status"], "eligible")
+        self.assertEqual(recommendations[0]["quality_label"], "High confidence")
+        self.assertTrue(recommendations[0]["automation_allowed"])
+
+    def test_meta_placement_exclusion_missing_adset_is_manual_only(self):
+        recommendations = guarded_recommendations(
+            [
+                {
+                    "action_type": "placement_exclusion",
+                    "platform": "Meta",
+                    "title": "Remove placement: Instagram - Stories",
+                    "description": "Spent RM 18.00 with zero conversions on Instagram - Stories.",
+                    "placement": "Instagram - Stories",
+                    "spend": 18,
+                    "clicks": 12,
+                    "conversions": 0,
+                    "impact_data": {"confidence_pct": 90},
+                    "automation": {"is_automatable": True},
+                }
+            ],
+            campaigns=[{"platform": "Meta", "name": "Campaign A", "status": "ACTIVE"}],
+        )
+
+        self.assertEqual(len(recommendations), 1)
+        self.assertEqual(recommendations[0]["guardrail_status"], "manual_only")
+        self.assertEqual(recommendations[0]["quality_label"], "Manual only")
+        self.assertFalse(recommendations[0]["automation_allowed"])
+
+    def test_meta_simple_audience_exclusion_can_auto_apply(self):
+        recommendations = guarded_recommendations(
+            [
+                {
+                    "action_type": "audience_exclusion",
+                    "platform": "Meta",
+                    "title": "Exclude Female",
+                    "description": "Spent RM 18.00 with zero conversions on Female segment.",
+                    "segment": "Female",
+                    "segment_type": "gender",
+                    "adset_id": "adset-1",
+                    "spend": 18,
+                    "clicks": 12,
+                    "conversions": 0,
+                    "impact_data": {"confidence_pct": 90},
+                    "automation": {"is_automatable": True},
+                }
+            ],
+            campaigns=[{"platform": "Meta", "name": "Campaign A", "status": "ACTIVE"}],
+        )
+
+        self.assertEqual(len(recommendations), 1)
+        self.assertTrue(recommendations[0]["automation_allowed"])
+
+    def test_meta_combined_age_gender_audience_exclusion_is_manual(self):
+        recommendations = guarded_recommendations(
+            [
+                {
+                    "action_type": "audience_exclusion",
+                    "platform": "Meta",
+                    "title": "Exclude Female 18-24",
+                    "description": "Spent RM 18.00 with zero conversions on Female 18-24 segment.",
+                    "segment": "Female 18-24",
+                    "segment_type": "demographic",
+                    "adset_id": "adset-1",
+                    "spend": 18,
+                    "clicks": 12,
+                    "conversions": 0,
+                    "impact_data": {"confidence_pct": 90},
+                    "automation": {"is_automatable": True},
+                }
+            ],
+            campaigns=[{"platform": "Meta", "name": "Campaign A", "status": "ACTIVE"}],
+        )
+
+        self.assertEqual(len(recommendations), 1)
+        self.assertEqual(recommendations[0]["guardrail_status"], "manual_only")
+        self.assertFalse(recommendations[0]["automation_allowed"])
+
+    def test_meta_objective_mismatch_remains_manual_only(self):
+        recommendations = guarded_recommendations(
+            [
+                {
+                    "action_type": "objective_mismatch",
+                    "platform": "Meta",
+                    "title": "Switch objective",
+                    "description": "Generating conversions despite LINK_CLICKS objective.",
+                    "campaign_id": "123",
+                    "spend": 20,
+                    "conversions": 3,
+                    "impact_data": {"confidence_pct": 65},
+                    "automation": {"is_automatable": False},
+                }
+            ],
+            campaigns=[{"platform": "Meta", "name": "Campaign A", "status": "ACTIVE"}],
+        )
+
+        self.assertEqual(len(recommendations), 1)
+        self.assertEqual(recommendations[0]["guardrail_status"], "manual_only")
+        self.assertFalse(recommendations[0]["automation_allowed"])
+
+    def test_meta_campaign_pause_remains_needs_review(self):
+        recommendations = guarded_recommendations(
+            [
+                {
+                    "action_type": "campaign_review",
+                    "platform": "Meta",
+                    "title": "Review or pause Campaign A",
+                    "description": "Spent RM 72.00 with zero conversions.",
+                    "campaign_name": "Campaign A",
+                    "campaign_id": "123",
+                    "spend": 72,
+                    "clicks": 30,
+                    "conversions": 0,
+                    "impact_data": {"confidence_pct": 90},
+                    "automation": {"is_automatable": True},
+                }
+            ],
+            campaigns=[{"platform": "Meta", "name": "Campaign A", "status": "ACTIVE"}],
+        )
+
+        self.assertEqual(len(recommendations), 1)
+        self.assertEqual(recommendations[0]["guardrail_status"], "manual_only")
+        self.assertEqual(recommendations[0]["quality_label"], "Needs review")
+        self.assertFalse(recommendations[0]["automation_allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()

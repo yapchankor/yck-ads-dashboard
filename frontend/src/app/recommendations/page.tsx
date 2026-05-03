@@ -14,6 +14,12 @@ type TrackedRecommendation = {
   keyword?: string;
   target_id?: string;
   campaign_id?: string;
+  adset_id?: string;
+  ad_id?: string;
+  ad_name?: string;
+  segment?: string;
+  placement?: string;
+  location?: string;
   normalized_key?: string;
   status?: string;
 };
@@ -29,15 +35,15 @@ function normalizeMatchValue(value: unknown) {
 function recommendationMatchKey(rec: Recommendation | TrackedRecommendation) {
   const actionType = normalizeMatchValue("actionType" in rec ? rec.actionType : rec.action_type);
   const platform = normalizeMatchValue(rec.platform);
-  const keyword = normalizeMatchValue(rec.keyword);
+  const subject = normalizeMatchValue(rec.keyword || rec.segment || rec.placement || rec.location || rec.ad_id || rec.ad_name);
   const target = normalizeMatchValue(
     "ad_group_name" in rec
-      ? rec.target_id || rec.ad_group_name
-      : rec.target_id,
+      ? rec.target_id || rec.adset_id || rec.ad_id || rec.ad_group_name
+      : rec.target_id || rec.adset_id || rec.ad_id,
   );
   const campaign = normalizeMatchValue("campaignName" in rec ? rec.campaign_id || rec.campaignName : rec.campaign_id);
 
-  if (actionType && keyword) return `${platform}|${actionType}|keyword:${keyword}|target:${target}|campaign:${campaign}`;
+  if (actionType && subject) return `${platform}|${actionType}|subject:${subject}|target:${target}|campaign:${campaign}`;
   if (actionType && target) return `${platform}|${actionType}|target:${target}|campaign:${campaign}`;
   if (actionType && campaign) return `${platform}|${actionType}|campaign:${campaign}`;
   return "";
@@ -46,8 +52,8 @@ function recommendationMatchKey(rec: Recommendation | TrackedRecommendation) {
 function recommendationFallbackKey(rec: Recommendation | TrackedRecommendation) {
   const actionType = normalizeMatchValue("actionType" in rec ? rec.actionType : rec.action_type);
   const platform = normalizeMatchValue(rec.platform);
-  const keyword = normalizeMatchValue(rec.keyword);
-  return actionType && keyword ? `${platform}|${actionType}|keyword:${keyword}` : "";
+  const subject = normalizeMatchValue(rec.keyword || rec.segment || rec.placement || rec.location || rec.ad_id || rec.ad_name);
+  return actionType && subject ? `${platform}|${actionType}|subject:${subject}` : "";
 }
 
 function removeTrackedRecommendations(recommendations: Recommendation[], trackedItems: TrackedRecommendation[]) {

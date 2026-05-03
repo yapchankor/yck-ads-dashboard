@@ -335,10 +335,18 @@ def normalize_match_value(value):
 def recommendation_match_key(item):
     action_type = normalize_match_value(item.get("action_type") or item.get("actionType") or item.get("type"))
     platform = normalize_match_value(item.get("platform"))
-    keyword = normalize_match_value(item.get("keyword"))
+    subject = normalize_match_value(
+        item.get("keyword")
+        or item.get("segment")
+        or item.get("placement")
+        or item.get("location")
+        or item.get("ad_id")
+        or item.get("ad_name")
+    )
     target = normalize_match_value(
         item.get("target_id")
         or item.get("adset_id")
+        or item.get("ad_id")
         or item.get("ad_group_name")
         or item.get("adGroupName")
     )
@@ -348,8 +356,8 @@ def recommendation_match_key(item):
         or item.get("campaignName")
     )
 
-    if action_type and keyword:
-        return f"{platform}|{action_type}|keyword:{keyword}|target:{target}|campaign:{campaign}"
+    if action_type and subject:
+        return f"{platform}|{action_type}|subject:{subject}|target:{target}|campaign:{campaign}"
     if action_type and target:
         return f"{platform}|{action_type}|target:{target}|campaign:{campaign}"
     if action_type and campaign:
@@ -359,9 +367,16 @@ def recommendation_match_key(item):
 def recommendation_fallback_key(item):
     action_type = normalize_match_value(item.get("action_type") or item.get("actionType") or item.get("type"))
     platform = normalize_match_value(item.get("platform"))
-    keyword = normalize_match_value(item.get("keyword"))
-    if action_type and keyword:
-        return f"{platform}|{action_type}|keyword:{keyword}"
+    subject = normalize_match_value(
+        item.get("keyword")
+        or item.get("segment")
+        or item.get("placement")
+        or item.get("location")
+        or item.get("ad_id")
+        or item.get("ad_name")
+    )
+    if action_type and subject:
+        return f"{platform}|{action_type}|subject:{subject}"
     return ""
 
 ACTION_CONTRACTS = {
@@ -396,34 +411,34 @@ ACTION_CONTRACTS = {
         "manual_reason": "Budget scaling requires the current daily budget and a numeric target budget.",
     },
     "audience_exclusion": {
-        "automation": "manual",
-        "risk": "high",
+        "automation": "auto",
+        "risk": "low",
         "category": "waste",
-        "manual_reason": "Audience exclusions can narrow delivery and must be reviewed manually.",
+        "manual_reason": "Audience exclusions require a verified ad set ID and segment.",
     },
     "placement_exclusion": {
-        "automation": "manual",
-        "risk": "high",
+        "automation": "auto",
+        "risk": "low",
         "category": "waste",
-        "manual_reason": "Placement exclusions can reduce delivery and must be reviewed manually.",
+        "manual_reason": "Placement exclusions require a verified ad set ID and placement.",
     },
     "geo_exclusion": {
-        "automation": "manual",
-        "risk": "high",
+        "automation": "auto",
+        "risk": "low",
         "category": "waste",
-        "manual_reason": "Location exclusions can reduce delivery and must be reviewed manually.",
+        "manual_reason": "Location exclusions require a verified ad set ID and location.",
     },
     "campaign_review": {
         "automation": "manual",
         "risk": "high",
         "category": "waste",
-        "manual_reason": "Campaign pausing or major campaign changes require manual review.",
+        "manual_reason": "Pausing an entire Meta campaign is high impact and must be reviewed manually.",
     },
     "geo_scaling": {
-        "automation": "manual",
+        "automation": "auto",
         "risk": "low",
         "category": "scale",
-        "manual_reason": "Geo scaling is not automated yet; review location performance before changing bids or budgets.",
+        "manual_reason": "Geo scaling requires a verified campaign or ad set ID.",
     },
     "schedule_bid_adjustment": {
         "automation": "manual",
@@ -438,22 +453,22 @@ ACTION_CONTRACTS = {
         "manual_reason": "Geo bid adjustments are not automated yet.",
     },
     "creative_refresh": {
-        "automation": "manual",
+        "automation": "auto",
         "risk": "low",
         "category": "creative",
-        "manual_reason": "Creative refresh requires new creative or copy review.",
+        "manual_reason": "Creative refresh requires a verified ad ID before the fatigued ad can be paused.",
     },
     "schedule_adjustment": {
-        "automation": "manual",
+        "automation": "auto",
         "risk": "low",
         "category": "schedule",
-        "manual_reason": "Schedule changes require manual confirmation before changing delivery.",
+        "manual_reason": "Schedule changes require a verified ad set ID and peak hours.",
     },
     "day_schedule": {
-        "automation": "manual",
+        "automation": "auto",
         "risk": "low",
         "category": "schedule",
-        "manual_reason": "Day-of-week schedule changes require manual confirmation.",
+        "manual_reason": "Day-of-week schedule changes require a verified ad set ID and wasted days.",
     },
     "audience_fatigue": {
         "automation": "manual",
@@ -523,9 +538,9 @@ SCALE_ACTION_TYPES = {
     action_type for action_type, contract in ACTION_CONTRACTS.items()
     if contract.get("category") in {"budget", "scale"}
 }
-CREATIVE_REVIEW_ACTION_TYPES = {
+MANUAL_REVIEW_ACTION_TYPES = {
     action_type for action_type, contract in ACTION_CONTRACTS.items()
-    if contract.get("category") in {"creative", "schedule", "audience", "setup", "website", "quality", "geo"}
+    if contract.get("automation") == "manual"
 }
 def action_contract(action_type_norm):
     return ACTION_CONTRACTS.get(normalize_match_value(action_type_norm), DEFAULT_ACTION_CONTRACT)
@@ -535,6 +550,14 @@ def normalized_recommendation_key(item):
 
 def is_google_ad_group_criterion_resource(value):
     return bool(re.match(r"^customers/\d+/adGroupCriteria/\d+~\d+$", str(value or "")))
+
+def audience_segment_safe_for_automation(segment):
+    segment_norm = normalize_match_value(segment)
+    has_age = bool(re.search(r"\b\d{2}\s*-\s*\d{2}\b", str(segment or "")))
+    has_gender = "male" in segment_norm or "female" in segment_norm
+    # Meta cannot exclude an age-and-gender intersection directly; applying both
+    # edits would be broader than the recommendation says.
+    return (has_age or has_gender) and not (has_age and has_gender)
 
 def has_required_automation_fields(action_type_norm, rec):
     if action_type_norm == "add_negative_keyword":
@@ -569,6 +592,34 @@ def has_required_automation_fields(action_type_norm, rec):
             return False
         return bool(rec.get("campaign_id") or rec.get("adset_id"))
 
+    if action_type_norm == "audience_exclusion":
+        return bool(rec.get("adset_id") and rec.get("segment") and audience_segment_safe_for_automation(rec.get("segment")))
+
+    if action_type_norm == "placement_exclusion":
+        return bool(rec.get("adset_id") and rec.get("placement"))
+
+    if action_type_norm == "geo_exclusion":
+        return bool(rec.get("adset_id") and (rec.get("location") or rec.get("location_key") or rec.get("region_key")))
+
+    if action_type_norm == "creative_refresh":
+        return bool(rec.get("ad_id"))
+
+    if action_type_norm == "schedule_adjustment":
+        if normalize_match_value(rec.get("budget_basis")) == "daily":
+            return False
+        return bool(rec.get("adset_id") and rec.get("best_hours"))
+
+    if action_type_norm == "day_schedule":
+        if normalize_match_value(rec.get("budget_basis")) == "daily":
+            return False
+        return bool(rec.get("adset_id") and rec.get("wasted_days"))
+
+    if action_type_norm == "geo_scaling":
+        return bool(rec.get("campaign_id") or rec.get("adset_id"))
+
+    if action_type_norm == "campaign_review":
+        return bool(rec.get("campaign_id"))
+
     return False
 
 def first_number(pattern, text):
@@ -595,7 +646,14 @@ def find_matching_row(rows, keyword=None, campaign=None, target=None):
     for row in rows or []:
         row_keyword = normalize_match_value(row.get("query") or row.get("search_term") or row.get("keyword") or row.get("keyword_text"))
         row_campaign = normalize_match_value(row.get("campaign") or row.get("campaign_name") or row.get("name"))
-        row_target = normalize_match_value(row.get("target_id") or row.get("ad_group_name") or row.get("adset_name"))
+        row_target = normalize_match_value(
+            row.get("target_id")
+            or row.get("ad_group_name")
+            or row.get("adset_id")
+            or row.get("adset_name")
+            or row.get("ad_id")
+            or row.get("ad_name")
+        )
         if keyword_norm and row_keyword and keyword_norm == row_keyword:
             return row
         if campaign_norm and row_campaign and campaign_norm == row_campaign:
@@ -608,7 +666,7 @@ def infer_recommendation_evidence(rec, data, date_days):
     description = rec.get("description") or rec.get("reason") or ""
     impact_data = rec.get("impact_data") or {}
     campaign = rec.get("campaign_name") or rec.get("campaignName")
-    target = rec.get("target_id") or rec.get("ad_group_name") or rec.get("adset_name")
+    target = rec.get("target_id") or rec.get("adset_id") or rec.get("adset_name") or rec.get("ad_id") or rec.get("ad_name") or rec.get("ad_group_name")
     keyword = rec.get("keyword")
 
     rows = []
@@ -616,6 +674,7 @@ def infer_recommendation_evidence(rec, data, date_days):
     rows.extend(data.get("keywords") or [])
     rows.extend(data.get("campaigns") or [])
     rows.extend(data.get("ad_sets") or [])
+    rows.extend(data.get("ads") or [])
     rows.extend(data.get("placement_breakdown") or [])
     rows.extend(data.get("demographic_breakdown") or [])
     rows.extend(data.get("meta_geo_performance") or [])
@@ -724,7 +783,13 @@ def recommendation_scope_inactive(rec, data):
     campaign = normalize_match_value(rec.get("campaign_name") or rec.get("campaignName"))
     ad_group = normalize_match_value(rec.get("ad_group_name") or rec.get("adGroupName"))
     keyword = normalize_match_value(rec.get("keyword"))
-    target = normalize_match_value(rec.get("target_id") or rec.get("ad_group_name") or rec.get("adset_name"))
+    target = normalize_match_value(
+        rec.get("target_id")
+        or rec.get("adset_id")
+        or rec.get("ad_id")
+        or rec.get("ad_group_name")
+        or rec.get("adset_name")
+    )
 
     for row in data.get("campaigns") or []:
         row_campaign_id = normalize_match_value(row.get("id") or row.get("campaign_id"))
@@ -740,12 +805,13 @@ def recommendation_scope_inactive(rec, data):
     rows.extend(data.get("search_queries") or [])
     rows.extend(data.get("ad_groups") or [])
     rows.extend(data.get("ad_sets") or [])
+    rows.extend(data.get("ads") or [])
 
     for row in rows:
         row_campaign_id = normalize_match_value(row.get("campaign_id"))
         row_campaign = normalize_match_value(row.get("campaign") or row.get("campaign_name") or row.get("name"))
         row_ad_group = normalize_match_value(row.get("ad_group_name") or row.get("ad_group") or row.get("adset_name"))
-        row_target = normalize_match_value(row.get("resource_name") or row.get("target_id") or row.get("adset_id"))
+        row_target = normalize_match_value(row.get("resource_name") or row.get("target_id") or row.get("adset_id") or row.get("ad_id"))
         row_keyword = normalize_match_value(row.get("keyword") or row.get("keyword_text") or row.get("search_term"))
 
         matches_scope = any([
@@ -759,9 +825,11 @@ def recommendation_scope_inactive(rec, data):
             continue
 
         if is_inactive_platform_status(row.get("campaign_status")):
-            return True, "Campaign is paused or inactive in cached Google Ads data."
+            return True, "Campaign is paused or inactive in cached platform data."
         if is_inactive_platform_status(row.get("ad_group_status")):
-            return True, "Ad group is paused or inactive in cached Google Ads data."
+            return True, "Ad group is paused or inactive in cached platform data."
+        if is_inactive_platform_status(row.get("status") or row.get("effective_status")):
+            return True, "Recommendation target is paused or inactive in cached platform data."
 
     return False, None
 
@@ -769,7 +837,10 @@ def platform_state_matches(rec, data):
     action_type = normalize_match_value(rec.get("action_type") or rec.get("type"))
     keyword = normalize_match_value(rec.get("keyword"))
     campaign = normalize_match_value(rec.get("campaign_name") or rec.get("campaignName"))
-    target = normalize_match_value(rec.get("target_id") or rec.get("ad_group_name"))
+    campaign_id = normalize_match_value(rec.get("campaign_id"))
+    adset_id = normalize_match_value(rec.get("adset_id"))
+    ad_id = normalize_match_value(rec.get("ad_id"))
+    target = normalize_match_value(rec.get("target_id") or rec.get("adset_id") or rec.get("ad_id") or rec.get("ad_group_name"))
 
     if action_type == "add_negative_keyword" and keyword:
         for neg in data.get("negative_keywords") or data.get("google_negative_keywords") or []:
@@ -789,6 +860,30 @@ def platform_state_matches(rec, data):
             keyword_matches = keyword and row_keyword == keyword and (not campaign or not row_campaign or row_campaign == campaign)
             if row_status == "paused" and (target_matches or keyword_matches):
                 return True, "Keyword is already paused in cached Google Ads data."
+
+    if action_type == "campaign_review" and (campaign_id or campaign):
+        for row in data.get("campaigns") or []:
+            row_campaign_id = normalize_match_value(row.get("id") or row.get("campaign_id"))
+            row_campaign = normalize_match_value(row.get("name") or row.get("campaign_name"))
+            if (
+                (campaign_id and row_campaign_id == campaign_id)
+                or (campaign and row_campaign == campaign)
+            ) and is_inactive_platform_status(row.get("status") or row.get("effective_status")):
+                return True, "Meta campaign is already paused or inactive in cached data."
+
+    if action_type == "creative_refresh" and (ad_id or target):
+        for row in data.get("ads") or []:
+            row_ad_id = normalize_match_value(row.get("ad_id") or row.get("id"))
+            row_ad_name = normalize_match_value(row.get("ad_name") or row.get("name"))
+            row_status = normalize_match_value(row.get("status") or row.get("effective_status"))
+            if row_status == "paused" and ((ad_id and row_ad_id == ad_id) or (target and row_ad_name == target)):
+                return True, "Meta ad is already paused in cached data."
+
+    if action_type in {"audience_exclusion", "placement_exclusion", "geo_exclusion", "schedule_adjustment", "day_schedule"} and adset_id:
+        for row in data.get("ad_sets") or []:
+            row_adset_id = normalize_match_value(row.get("adset_id") or row.get("id"))
+            if row_adset_id == adset_id and is_inactive_platform_status(row.get("status") or row.get("effective_status")):
+                return True, "Meta ad set is paused or inactive in cached data."
 
     return False, None
 
@@ -882,6 +977,13 @@ def apply_recommendation_guardrails(data):
                 automation_allowed = False
                 reasons.append("This item has conversions, so it requires manual review.")
 
+        if action_type_norm == "audience_exclusion" and guardrail_status != "suppressed":
+            if rec.get("segment") and not audience_segment_safe_for_automation(rec.get("segment")):
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Meta cannot safely auto-exclude combined age and gender segments without changing broader targeting.")
+
         if is_bid_decrease and guardrail_status != "suppressed":
             if spend is None or spend < 10 or conversions not in (None, 0):
                 guardrail_status = "manual_only"
@@ -942,7 +1044,14 @@ def apply_recommendation_guardrails(data):
                 automation_allowed = False
                 reasons.append("Budget scaling requires at least 5 conversions.")
 
-        if action_type_norm in CREATIVE_REVIEW_ACTION_TYPES and guardrail_status == "eligible":
+        if action_type_norm in {"schedule_adjustment", "day_schedule"} and guardrail_status != "suppressed":
+            if normalize_match_value(rec.get("budget_basis")) == "daily":
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Meta ad scheduling requires a lifetime-budget ad set; this ad set uses a daily budget.")
+
+        if action_type_norm in MANUAL_REVIEW_ACTION_TYPES and guardrail_status == "eligible":
             guardrail_status = "manual_only"
             quality_label = "Manual only"
             automation_allowed = False
@@ -1311,6 +1420,16 @@ class ApplyRequest(BaseModel):
     current_budget: Optional[float] = None
     budget_basis: Any = None
     adset_id: Any = None
+    ad_id: Any = None
+    ad_name: Any = None
+    segment: Any = None
+    segment_type: Any = None
+    placement: Any = None
+    location: Any = None
+    location_key: Any = None
+    location_type: Any = None
+    best_hours: Optional[list[Any]] = None
+    wasted_days: Optional[list[Any]] = None
     normalized_key: Any = None
     quality_label: Any = None
     confidence_score: Optional[float] = None
@@ -1525,6 +1644,13 @@ def google_execution_result(action_label: str, result: dict):
     message = result.get("message") or result.get("error") or "Google Ads API returned an error"
     return f"Error: {message}", "error"
 
+def meta_execution_result(action_label: str, result: dict):
+    if result.get("status") == "success":
+        return f"Applied: {action_label}", "applied"
+
+    message = result.get("message") or result.get("error") or "Meta API returned an error"
+    return f"Meta Error: {message}", "error"
+
 def apply_response_payload(response_status, execution_status, tracking_record=None, message=None, execution_result=None):
     payload = {
         "status": response_status,
@@ -1563,6 +1689,14 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     request.campaign_id = request_text(request.campaign_id)
     request.keyword = request_text(request.keyword)
     request.adset_id = request_text(request.adset_id)
+    request.ad_id = request_text(request.ad_id)
+    request.ad_name = request_text(request.ad_name)
+    request.segment = request_text(request.segment)
+    request.segment_type = request_text(request.segment_type)
+    request.placement = request_text(request.placement)
+    request.location = request_text(request.location)
+    request.location_key = request_text(request.location_key)
+    request.location_type = request_text(request.location_type)
     request.budget_basis = request_text(request.budget_basis)
     request.normalized_key = request_text(request.normalized_key)
     request.quality_label = request_text(request.quality_label)
@@ -1592,8 +1726,13 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "action_type": request.action_type,
         "platform": request.platform,
         "keyword": request.keyword,
-        "target_id": request.target_id or request.adset_id,
+        "target_id": request.target_id or request.adset_id or request.ad_id,
         "campaign_id": request.campaign_id,
+        "ad_id": request.ad_id,
+        "ad_name": request.ad_name,
+        "segment": request.segment,
+        "placement": request.placement,
+        "location": request.location,
     })
     request_contract_record = {
         "action_type": request.action_type,
@@ -1602,7 +1741,15 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "target_id": request.target_id,
         "campaign_id": request.campaign_id,
         "adset_id": request.adset_id,
+        "ad_id": request.ad_id,
         "keyword": request.keyword,
+        "segment": request.segment,
+        "placement": request.placement,
+        "location": request.location,
+        "location_key": request.location_key,
+        "location_type": request.location_type,
+        "best_hours": request.best_hours,
+        "wasted_days": request.wasted_days,
         "suggested_bid": request.suggested_bid,
         "current_budget": request.current_budget,
         "budget_basis": request.budget_basis,
@@ -1679,39 +1826,55 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     elif normalize_match_value(request.platform) == "meta":
         try:
             import meta_ads_executor
-            
+
             if action_type_norm in {"budget_adjustment", "budget_scaling"} and request.campaign_id and request.suggested_bid:
                 execution_result = meta_ads_executor.update_budget(request.campaign_id, request.suggested_bid)
-                if execution_result.get("status") == "success":
-                    execution_status = "Applied: Meta budget updated"
-                    response_status = "applied"
-                else:
-                    execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"
-                    response_status = "error"
+                execution_status, response_status = meta_execution_result("Meta campaign budget updated", execution_result)
             elif action_type_norm in {"budget_adjustment", "budget_scaling"} and request.adset_id and request.suggested_bid:
                 execution_result = meta_ads_executor.update_ad_set_budget(request.adset_id, request.suggested_bid)
-                if execution_result.get("status") == "success":
-                    execution_status = "Applied: Meta ad set budget updated"
-                    response_status = "applied"
-                else:
-                    execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"
-                    response_status = "error"
+                execution_status, response_status = meta_execution_result("Meta ad set budget updated", execution_result)
             elif action_type_norm == "budget_scaling" and request.campaign_id:
                 execution_result = meta_ads_executor.scale_campaign_budget(request.campaign_id, scale_factor=1.25)
-                if execution_result.get("status") == "success":
-                    execution_status = "Applied: Meta campaign budget scaled 25%"
-                    response_status = "applied"
-                else:
-                    execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"
-                    response_status = "error"
+                execution_status, response_status = meta_execution_result("Meta campaign budget scaled 25%", execution_result)
             elif action_type_norm == "budget_scaling" and request.adset_id:
                 execution_result = meta_ads_executor.scale_ad_set_budget(request.adset_id, scale_factor=1.25)
-                if execution_result.get("status") == "success":
-                    execution_status = "Applied: Meta ad set budget scaled 25%"
-                    response_status = "applied"
-                else:
-                    execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"
-                    response_status = "error"
+                execution_status, response_status = meta_execution_result("Meta ad set budget scaled 25%", execution_result)
+            elif action_type_norm == "audience_exclusion" and request.adset_id and request.segment:
+                execution_result = meta_ads_executor.exclude_demographic_segment(
+                    request.adset_id,
+                    request.segment_type or "demographic",
+                    request.segment,
+                )
+                execution_status, response_status = meta_execution_result("Meta audience exclusion applied", execution_result)
+            elif action_type_norm == "placement_exclusion" and request.adset_id and request.placement:
+                execution_result = meta_ads_executor.exclude_placement(request.adset_id, request.placement)
+                execution_status, response_status = meta_execution_result("Meta placement exclusion applied", execution_result)
+            elif action_type_norm == "geo_exclusion" and request.adset_id and (request.location or request.location_key):
+                execution_result = meta_ads_executor.exclude_geo_location(
+                    request.adset_id,
+                    location_name=request.location,
+                    location_key=request.location_key,
+                    location_type=request.location_type,
+                )
+                execution_status, response_status = meta_execution_result("Meta geo exclusion applied", execution_result)
+            elif action_type_norm == "creative_refresh" and request.ad_id:
+                execution_result = meta_ads_executor.pause_ad(request.ad_id)
+                execution_status, response_status = meta_execution_result("Meta fatigued ad paused", execution_result)
+            elif action_type_norm == "schedule_adjustment" and request.adset_id and request.best_hours:
+                execution_result = meta_ads_executor.adjust_ad_schedule(request.adset_id, request.best_hours)
+                execution_status, response_status = meta_execution_result("Meta ad schedule updated", execution_result)
+            elif action_type_norm == "day_schedule" and request.adset_id and request.wasted_days:
+                execution_result = meta_ads_executor.adjust_day_schedule(request.adset_id, request.wasted_days)
+                execution_status, response_status = meta_execution_result("Meta day schedule updated", execution_result)
+            elif action_type_norm == "geo_scaling" and request.campaign_id:
+                execution_result = meta_ads_executor.scale_campaign_budget(request.campaign_id, scale_factor=1.20)
+                execution_status, response_status = meta_execution_result("Meta campaign budget scaled 20%", execution_result)
+            elif action_type_norm == "geo_scaling" and request.adset_id:
+                execution_result = meta_ads_executor.scale_ad_set_budget(request.adset_id, scale_factor=1.20)
+                execution_status, response_status = meta_execution_result("Meta ad set budget scaled 20%", execution_result)
+            elif action_type_norm == "campaign_review" and request.campaign_id:
+                execution_status = "Manual: pausing an entire campaign requires human approval in Ads Manager."
+                response_status = "manual_required"
             else:
                 execution_status = "Manual: unsupported Meta action"
                 response_status = "manual_required"
@@ -1745,6 +1908,16 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "target_id": request.target_id,
         "campaign_id": request.campaign_id,
         "adset_id": request.adset_id,
+        "ad_id": request.ad_id,
+        "ad_name": request.ad_name,
+        "segment": request.segment,
+        "segment_type": request.segment_type,
+        "placement": request.placement,
+        "location": request.location,
+        "location_key": request.location_key,
+        "location_type": request.location_type,
+        "best_hours": request.best_hours,
+        "wasted_days": request.wasted_days,
         "keyword": request.keyword,
         "current_budget": request.current_budget,
         "budget_basis": request.budget_basis,
@@ -2062,12 +2235,14 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
                     data['keywords'] = []
                     data['insights'] = []
                     data['ad_sets'] = []
+                    data['ads'] = []
                     data['demographic_breakdown'] = []
                     data['placement_breakdown'] = []
                     data['meta_geo_performance'] = []
                     data['time_performance'] = {}
                 else:
                     data['ad_sets'] = fb_data.get('ad_sets', [])
+                    data['ads'] = fb_data.get('ads', [])
                     data['demographic_breakdown'] = fb_data.get('demographic_breakdown', [])
                     data['placement_breakdown'] = fb_data.get('placement_breakdown', [])
                     data['meta_geo_performance'] = fb_data.get('geo_performance', [])
@@ -2097,6 +2272,16 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
                             'adset_name': rec.get('adset_name'),
                             'campaign_id': rec.get('campaign_id'),
                             'adset_id': rec.get('adset_id'),
+                            'ad_id': rec.get('ad_id'),
+                            'ad_name': rec.get('ad_name'),
+                            'segment': rec.get('segment'),
+                            'segment_type': rec.get('segment_type'),
+                            'placement': rec.get('placement'),
+                            'location': rec.get('location'),
+                            'location_key': rec.get('location_key') or rec.get('region_key'),
+                            'location_type': rec.get('location_type') or ('region' if rec.get('region_key') else None),
+                            'best_hours': rec.get('best_hours'),
+                            'wasted_days': rec.get('wasted_days'),
                             'suggested_bid': rec.get('suggested_budget') or rec.get('impact_data', {}).get('suggested_budget'),
                             'current_budget': rec.get('current_budget') or rec.get('daily_budget') or rec.get('budget'),
                             'budget_basis': rec.get('budget_basis'),

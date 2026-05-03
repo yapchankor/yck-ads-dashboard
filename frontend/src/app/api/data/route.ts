@@ -59,7 +59,7 @@ function enrichRecommendation(raw: any) {
     "schedule_adjustment", "day_schedule",
     "geo_scaling"
   ]);
-  const hasRequiredTarget = Boolean(raw.target_id || raw.campaign_id || raw.adset_id);
+  const hasRequiredTarget = Boolean(raw.target_id || raw.campaign_id || raw.adset_id || raw.ad_id);
   const legacyAutomationAllowed = (
     ((platform === "google" || platform === "cross-platform") && googleAuto.has(type)) ||
     (platform === "meta" && metaAuto.has(type))
@@ -85,6 +85,16 @@ function enrichRecommendation(raw: any) {
     target_id: raw.target_id || null,
     campaign_id: raw.campaign_id || null,
     adset_id: raw.adset_id || null,
+    ad_id: raw.ad_id || null,
+    ad_name: raw.ad_name || null,
+    segment: raw.segment || null,
+    segment_type: raw.segment_type || null,
+    placement: raw.placement || null,
+    location: raw.location || null,
+    location_key: raw.location_key || raw.region_key || null,
+    location_type: raw.location_type || null,
+    best_hours: Array.isArray(raw.best_hours) ? raw.best_hours : null,
+    wasted_days: Array.isArray(raw.wasted_days) ? raw.wasted_days : null,
     normalized_key: raw.normalized_key || null,
     current_bid: currentBid,
     suggested_bid: suggestedBid,
