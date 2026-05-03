@@ -207,29 +207,9 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
     # 4. Budget recommendations
     for pacing in budget_analysis.get('campaign_pacing', []):
         if pacing.get('status') == 'underspending':
-            automation = get_automation_metadata('budget_adjustment', platform='facebook')
-            impact_data = {
-                'monthly_savings': 0,
-                'additional_conversions_monthly': 0,
-                'confidence': 'low',
-                'confidence_pct': 50,
-                'formula': 'Informational - results depend on campaign quality',
-                'assumptions': ['Campaign is being limited by budget']
-            }
-
-            rec = {
-                'type': 'budget_adjustment',
-                'action': f"Increase budget for {pacing['campaign_name']}",
-                'reason': f"Only using {pacing['utilization_pct']:.0f}% of {pacing['budget_type']} budget. Campaign may be limited.",
-                'expected_impact': 'More impressions and potential conversions',
-                'priority': 'medium',
-                'campaign_name': pacing['campaign_name'],
-                'campaign_id': pacing.get('campaign_id'),
-                'suggested_budget': round(pacing.get('daily_budget', pacing.get('spend', 0)) * 1.20, 2), # Suggest 20% increase
-                'impact_data': impact_data,
-                'automation': automation,
-            }
-            recommendations.append(rec)
+            # Low budget utilization means budget is not the bottleneck. Do not
+            # recommend increasing spend; delivery/targeting review belongs in insights.
+            continue
         elif pacing.get('status') == 'overspending':
             automation = get_automation_metadata('budget_adjustment', platform='facebook')
             impact_data = {

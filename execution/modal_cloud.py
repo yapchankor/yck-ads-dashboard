@@ -384,7 +384,6 @@ CREATIVE_REVIEW_ACTION_TYPES = {
     "landing_page",
     "quality_improvement",
     "ad_copy",
-    "budget_adjustment",
 }
 AUTOMATABLE_ACTION_TYPES = {
     "add_negative_keyword",
@@ -395,7 +394,6 @@ AUTOMATABLE_ACTION_TYPES = {
 }
 HIGH_RISK_REVIEW_ACTION_TYPES = {
     "budget_scaling",
-    "budget_adjustment",
     "geo_scaling",
     "audience_exclusion",
     "placement_exclusion",
@@ -424,7 +422,7 @@ def has_required_automation_fields(action_type_norm, rec):
         )
 
     if action_type_norm in {"budget_adjustment", "budget_scaling"}:
-        return bool(rec.get("campaign_id") or rec.get("adset_id"))
+        return bool((rec.get("campaign_id") or rec.get("adset_id")) and safe_number(rec.get("suggested_bid"), None) is not None)
 
     return False
 
@@ -665,6 +663,8 @@ def apply_recommendation_guardrails(data):
             unsupported_metric = True
             reasons.append("ROAS/revenue recommendation disabled until conversion value tracking is verified.")
 
+        budget_utilization_pct = first_number(r"only using\s+([0-9][0-9,.]*)%", unsupported_text)
+
         evidence = infer_recommendation_evidence(rec, data, date_days)
         confidence_score = int(max(0, min(100, safe_number(evidence["confidence_inputs"].get("impact_confidence_pct"), 0))))
         automation = rec.get("automation") or {}
@@ -680,6 +680,12 @@ def apply_recommendation_guardrails(data):
         if unsupported_metric and not has_conversion_value:
             guardrail_status = "suppressed"
             quality_label = "Insufficient data"
+
+        if action_type_norm == "budget_adjustment" and budget_utilization_pct is not None and budget_utilization_pct < 70:
+            guardrail_status = "suppressed"
+            quality_label = "Insufficient data"
+            automation_allowed = False
+            reasons.append("Campaign is underutilizing its current budget; increasing budget is not supported.")
 
         state_applied, state_reason = platform_state_matches(rec, data)
         if state_applied:
@@ -754,6 +760,18 @@ def apply_recommendation_guardrails(data):
                 quality_label = downgrade_label(action_type_norm, rec, conversions)
                 automation_allowed = False
                 reasons.append("Not enough conversion volume for automatic scaling.")
+
+        if action_type_norm == "budget_adjustment" and guardrail_status != "suppressed":
+            if suggested_bid is None:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("No numeric budget target is available for automatic apply.")
+            elif confidence_score < 70:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Budget change confidence is below the auto-apply threshold.")
 
         if action_type_norm == "budget_scaling" and guardrail_status != "suppressed":
             if conversions is None or conversions < 5:
@@ -1478,6 +1496,14 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
                 execution_result = meta_ads_executor.update_budget(request.campaign_id, request.suggested_bid)
                 if execution_result.get("status") == "success":
                     execution_status = "Applied: Meta budget updated"
+                    response_status = "applied"
+                else:
+                    execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"
+                    response_status = "error"
+            elif action_type_norm in {"budget_adjustment", "budget_scaling"} and request.adset_id and request.suggested_bid:
+                execution_result = meta_ads_executor.update_ad_set_budget(request.adset_id, request.suggested_bid)
+                if execution_result.get("status") == "success":
+                    execution_status = "Applied: Meta ad set budget updated"
                     response_status = "applied"
                 else:
                     execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"

@@ -4,6 +4,22 @@ from facebook_business.adobjects.adaccount import AdAccount
 from facebook_business.adobjects.campaign import Campaign
 from facebook_business.adobjects.adset import AdSet
 from facebook_business.adobjects.ad import Ad
+from facebook_business.exceptions import FacebookRequestError
+
+def meta_error_response(ex):
+    if isinstance(ex, FacebookRequestError):
+        return {
+            "status": "error",
+            "code": ex.api_error_code(),
+            "message": f"Meta API Error {ex.api_error_code()}: {ex.api_error_message()}",
+            "type": ex.api_error_type(),
+            "trace_id": ex.api_error_trace_id(),
+        }
+    return {
+        "status": "error",
+        "code": type(ex).__name__,
+        "message": f"{type(ex).__name__}: {ex}",
+    }
 
 def init_facebook_api():
     """Initialize the Facebook Ads API from environment variables."""
@@ -34,21 +50,27 @@ def pause_ad_set(ad_set_id):
 
 def update_budget(campaign_id, suggested_budget):
     """Update the daily budget for a Meta Ads campaign."""
-    init_facebook_api()
-    campaign = Campaign(campaign_id)
-    # Meta budgets are in cents (integer)
-    budget_cents = int(float(suggested_budget) * 100)
-    campaign.remote_update(params={
-        'daily_budget': budget_cents,
-    })
-    return {"status": "success", "id": campaign_id}
+    try:
+        init_facebook_api()
+        campaign = Campaign(campaign_id)
+        # Meta budgets are in cents (integer)
+        budget_cents = int(float(suggested_budget) * 100)
+        campaign.remote_update(params={
+            'daily_budget': budget_cents,
+        })
+        return {"status": "success", "id": campaign_id}
+    except Exception as ex:
+        return meta_error_response(ex)
 
 def update_ad_set_budget(ad_set_id, suggested_budget):
     """Update the daily budget for a Meta Ads ad set."""
-    init_facebook_api()
-    adset = AdSet(ad_set_id)
-    budget_cents = int(float(suggested_budget) * 100)
-    adset.remote_update(params={
-        'daily_budget': budget_cents,
-    })
-    return {"status": "success", "id": ad_set_id}
+    try:
+        init_facebook_api()
+        adset = AdSet(ad_set_id)
+        budget_cents = int(float(suggested_budget) * 100)
+        adset.remote_update(params={
+            'daily_budget': budget_cents,
+        })
+        return {"status": "success", "id": ad_set_id}
+    except Exception as ex:
+        return meta_error_response(ex)
