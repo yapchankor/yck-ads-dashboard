@@ -239,6 +239,7 @@ export function RecommendationCard({
   const isDone = cardStatus === "applied" || cardStatus === "manual_confirmed" || cardStatus === "dismissed";
 
   const actionLabel = ACTION_TYPE_LABELS[rec.actionType] || rec.actionType;
+  const targetGroupLabel = isMeta ? "Ad Set" : "Ad Group";
   const bidChangePct = rec.current_bid && rec.suggested_bid
     ? ((rec.suggested_bid - rec.current_bid) / rec.current_bid) * 100
     : null;
@@ -307,7 +308,7 @@ export function RecommendationCard({
           <div className="flex items-start gap-2">
             <Layers className="w-3.5 h-3.5 text-text-muted shrink-0 mt-0.5" />
             <p className="text-xs text-text-muted break-words leading-snug">
-              <span className="font-semibold text-foreground">Ad Group: </span>{rec.ad_group_name}
+              <span className="font-semibold text-foreground">{targetGroupLabel}: </span>{rec.ad_group_name}
             </p>
           </div>
         )}

@@ -130,11 +130,15 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
         top_adset = max(active_adsets, key=lambda x: (x.get('conversions', 0), x.get('spend', 0)))
         top_adset_id = top_adset.get('adset_id')
         top_adset_name = top_adset.get('adset_name')
+        top_adset_campaign_id = top_adset.get('campaign_id')
+        top_adset_campaign_name = top_adset.get('campaign_name')
         top_adset_current_budget = top_adset.get('lifetime_budget') or top_adset.get('daily_budget') or 0
         top_adset_budget_basis = 'lifetime' if top_adset.get('lifetime_budget') else ('daily' if top_adset.get('daily_budget') else None)
     else:
         top_adset_id = None
         top_adset_name = None
+        top_adset_campaign_id = None
+        top_adset_campaign_name = None
         top_adset_current_budget = 0
         top_adset_budget_basis = None
 
@@ -525,11 +529,21 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
 
             rec = {
                 'type': 'geo_scaling',
-                'action': f"Increase spend in {loc['location']}",
+                'action': (
+                    f"Scale {top_adset_name} because {loc['location']} is performing well"
+                    if top_adset_name else f"Review spend increase for {loc['location']}"
+                ),
                 'reason': f"CPA {currency} {loc['cpa']:,.2f} is {loc['vs_avg']}% below average. "
                          f"{loc['conversions']} conversions from {currency} {loc['spend']:,.2f} spend.",
                 'expected_impact': f"+{impact_data['additional_conversions_monthly']:.1f} conversions/month at {currency} {loc['cpa']:,.2f} CPA ({impact_data['confidence_pct']}% confidence)",
                 'priority': 'medium',
+                'campaign_name': top_adset_campaign_name,
+                'campaign_id': top_adset_campaign_id,
+                'adset_name': top_adset_name,
+                'adset_id': top_adset_id,
+                'current_budget': top_adset_current_budget,
+                'budget_basis': top_adset_budget_basis,
+                'suggested_budget': round(top_adset_current_budget * 1.20, 2) if top_adset_current_budget else None,
                 'location': loc['location'],
                 'region': loc.get('region'),
                 'country': loc.get('country'),

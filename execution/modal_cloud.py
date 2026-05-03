@@ -438,7 +438,7 @@ ACTION_CONTRACTS = {
         "automation": "auto",
         "risk": "low",
         "category": "scale",
-        "manual_reason": "Geo scaling requires a verified campaign or ad set ID.",
+        "manual_reason": "This location insight needs a linked campaign or ad set before it can be automated; refresh Meta data or review it in Ads Manager.",
     },
     "schedule_bid_adjustment": {
         "automation": "manual",

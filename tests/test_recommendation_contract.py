@@ -399,6 +399,57 @@ class RecommendationContractTests(unittest.TestCase):
         self.assertEqual(recommendations[0]["quality_label"], "Needs review")
         self.assertFalse(recommendations[0]["automation_allowed"])
 
+    def test_meta_geo_scaling_with_adset_id_can_auto_apply(self):
+        recommendations = guarded_recommendations(
+            [
+                {
+                    "action_type": "geo_scaling",
+                    "platform": "Meta",
+                    "title": "Scale ad set because Putrajaya is performing well",
+                    "description": "CPA RM 1.65 is 26.8% below average. 29 conversions from RM 47.71 spend.",
+                    "campaign_name": "Campaign A",
+                    "campaign_id": "campaign-1",
+                    "adset_name": "Ad Set A",
+                    "adset_id": "adset-1",
+                    "location": "Putrajaya, MY",
+                    "spend": 47.71,
+                    "clicks": 40,
+                    "conversions": 29,
+                    "impact_data": {"confidence_pct": 70},
+                    "automation": {"is_automatable": True},
+                }
+            ],
+            campaigns=[{"platform": "Meta", "name": "Campaign A", "campaign_id": "campaign-1", "status": "ACTIVE"}],
+        )
+
+        self.assertEqual(len(recommendations), 1)
+        self.assertEqual(recommendations[0]["guardrail_status"], "eligible")
+        self.assertTrue(recommendations[0]["automation_allowed"])
+
+    def test_meta_geo_scaling_without_target_is_manual_with_clear_reason(self):
+        recommendations = guarded_recommendations(
+            [
+                {
+                    "action_type": "geo_scaling",
+                    "platform": "Meta",
+                    "title": "Increase spend in Putrajaya, MY",
+                    "description": "CPA RM 1.65 is 26.8% below average. 29 conversions from RM 47.71 spend.",
+                    "location": "Putrajaya, MY",
+                    "spend": 47.71,
+                    "clicks": 40,
+                    "conversions": 29,
+                    "impact_data": {"confidence_pct": 70},
+                    "automation": {"is_automatable": True},
+                }
+            ],
+            campaigns=[{"platform": "Meta", "name": "Campaign A", "status": "ACTIVE"}],
+        )
+
+        self.assertEqual(len(recommendations), 1)
+        self.assertEqual(recommendations[0]["guardrail_status"], "manual_only")
+        self.assertFalse(recommendations[0]["automation_allowed"])
+        self.assertIn("linked campaign or ad set", " ".join(recommendations[0]["guardrail_reasons"]))
+
 
 if __name__ == "__main__":
     unittest.main()
