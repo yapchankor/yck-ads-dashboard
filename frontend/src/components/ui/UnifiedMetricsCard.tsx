@@ -51,6 +51,13 @@ function MetricItem({ title, value, delta, deltaType, isCurrency, inverseColors 
   );
 }
 
+export type AnomalyAlert = {
+  severity: "warn" | "critical";
+  title: string;
+  message: string;
+  action?: string;
+};
+
 interface UnifiedMetricsCardProps {
   metrics: {
     totalSpend: number;
@@ -62,46 +69,74 @@ interface UnifiedMetricsCardProps {
     dateRange?: { start: string; end: string };
   };
   cpaLabel?: string;
+  anomalyAlerts?: AnomalyAlert[];
 }
 
-export function UnifiedMetricsCard({ metrics, cpaLabel = "Blended CPA" }: UnifiedMetricsCardProps) {
-  const dateLabel = metrics.dateRange 
+export function UnifiedMetricsCard({ metrics, cpaLabel = "Blended CPA", anomalyAlerts = [] }: UnifiedMetricsCardProps) {
+  const dateLabel = metrics.dateRange
     ? `${new Date(metrics.dateRange.start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${new Date(metrics.dateRange.end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
     : "Last 30 Days";
 
+  const showROAS = typeof metrics.blendedROAS === "number" && metrics.blendedROAS > 0;
+
   return (
-    <div className="bg-surface shadow-sm rounded-2xl p-6 border border-border/60">
-      {/* Card Header matching Emitly */}
-      <div className="flex items-center justify-between mb-8">
+    <div className="bg-surface shadow-sm rounded-2xl p-6 border border-border/60 flex flex-col gap-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-foreground">Performance Over Time</h2>
+          <h2 className="text-lg font-bold text-foreground">Account Performance</h2>
           <p className="text-xs font-medium text-text-muted mt-1">{dateLabel}</p>
         </div>
       </div>
 
-      {/* Divided Metrics Row */}
+      {anomalyAlerts.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {anomalyAlerts.map((alert, i) => (
+            <div key={i} className={cn(
+              "rounded-xl border px-4 py-3",
+              alert.severity === "critical" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"
+            )}>
+              <p className={cn("text-sm font-bold", alert.severity === "critical" ? "text-red-700" : "text-amber-800")}>
+                {alert.title}
+              </p>
+              <p className={cn("text-xs mt-0.5", alert.severity === "critical" ? "text-red-600" : "text-amber-700")}>
+                {alert.message}
+              </p>
+              {alert.action && (
+                <p className={cn("text-xs mt-1 font-semibold", alert.severity === "critical" ? "text-red-700" : "text-amber-800")}>
+                  → {alert.action}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
-        <MetricItem 
-          title="Total Spend" 
-          value={metrics.totalSpend} 
-          delta={metrics.spendDelta} 
-          deltaType="increase" 
-          isCurrency 
-        />
-        <MetricItem 
-          title={cpaLabel} 
-          value={metrics.blendedCPA} 
-          delta={metrics.cpaDelta} 
-          deltaType="decrease" 
-          isCurrency 
-          inverseColors 
-        />
-        <MetricItem 
-          title="Total Conversions" 
-          value={metrics.totalConversions} 
-          delta={12.8}
+        <MetricItem
+          title="Total Spend"
+          value={metrics.totalSpend}
+          delta={metrics.spendDelta}
           deltaType="increase"
+          isCurrency
         />
+        <MetricItem
+          title={cpaLabel}
+          value={metrics.blendedCPA}
+          delta={metrics.cpaDelta}
+          deltaType="decrease"
+          isCurrency
+          inverseColors
+        />
+        <MetricItem
+          title="Total Conversions"
+          value={metrics.totalConversions}
+        />
+        {showROAS && (
+          <MetricItem
+            title="ROAS"
+            value={`${metrics.blendedROAS!.toFixed(2)}×`}
+          />
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,1353 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facebook Ads Insights - Yap Chan Kor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f2f5;
+            padding: 20px;
+            color: #1c1e21;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding: 20px 0 30px;
+            border-bottom: 3px solid #1877F2;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #1877F2;
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+        .header .subtitle {
+            color: #65676b;
+            font-size: 14px;
+        }
+        .header .account-name {
+            font-size: 18px;
+            color: #1c1e21;
+            margin-top: 5px;
+        }
+        .platform-badge {
+            display: inline-block;
+            background: #1877F2;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        /* Metric cards */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            padding: 20px;
+            border-radius: 10px;
+            color: white;
+            text-align: center;
+        }
+        .metric-card h3 { font-size: 12px; opacity: 0.9; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+        .metric-card .value { font-size: 26px; font-weight: 700; }
+        .metric-card .sub { font-size: 11px; opacity: 0.8; margin-top: 4px; }
+        .bg-blue { background: linear-gradient(135deg, #1877F2, #0d47a1); }
+        .bg-green { background: linear-gradient(135deg, #42b72a, #2e7d32); }
+        .bg-orange { background: linear-gradient(135deg, #f5a623, #e65100); }
+        .bg-purple { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
+        .bg-teal { background: linear-gradient(135deg, #06b6d4, #0e7490); }
+        .bg-pink { background: linear-gradient(135deg, #ec4899, #be185d); }
+        .bg-amber { background: linear-gradient(135deg, #f59e0b, #d97706); }
+
+        /* Sections */
+        .section { margin-bottom: 30px; }
+        .section h2 {
+            color: #1877F2;
+            font-size: 20px;
+            margin-bottom: 5px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e4e6eb;
+        }
+        .section .description {
+            color: #65676b;
+            font-size: 13px;
+            margin-bottom: 15px;
+        }
+
+        /* AI Summary */
+        .ai-summary {
+            background: #f0f7ff;
+            border-left: 4px solid #1877F2;
+            padding: 20px;
+            border-radius: 0 8px 8px 0;
+            margin-bottom: 30px;
+            line-height: 1.7;
+            color: #1c1e21;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th {
+            background: #f0f2f5;
+            color: #65676b;
+            padding: 10px 8px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #e4e6eb;
+        }
+        tr:hover { background: #f7f8fa; }
+        .text-right { text-align: right; }
+
+        /* Status badges */
+        .status { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .status-active { background: #e6f4ea; color: #1e7e34; }
+        .status-paused { background: #fef3cd; color: #856404; }
+        .status-other { background: #e4e6eb; color: #65676b; }
+
+        /* Fatigue indicators */
+        .fatigue-healthy { color: #42b72a; }
+        .fatigue-warning { color: #f5a623; font-weight: 600; }
+        .fatigue-critical { color: #fa3e3e; font-weight: 700; }
+
+        /* Color-coded values */
+        .color-good { color: #42b72a; font-weight: 600; }
+        .color-ok { color: #f5a623; font-weight: 600; }
+        .color-bad { color: #fa3e3e; font-weight: 600; }
+
+        /* Recommendation cards */
+        .rec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 15px; }
+        .rec-card {
+            border: 1px solid #e4e6eb;
+            border-radius: 8px;
+            padding: 18px;
+            transition: box-shadow 0.2s;
+        }
+        .rec-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+        .rec-card .rec-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .rec-card h4 { font-size: 14px; color: #1c1e21; }
+        .rec-card p { font-size: 13px; color: #65676b; line-height: 1.5; margin-bottom: 8px; }
+        .rec-card .impact { font-size: 12px; color: #65676b; font-style: italic; }
+        .priority-high { border-left: 4px solid #fa3e3e; }
+        .priority-medium { border-left: 4px solid #f5a623; }
+        .priority-low { border-left: 4px solid #42b72a; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .badge-high { background: #fde8e8; color: #fa3e3e; }
+        .badge-medium { background: #fef3cd; color: #e65100; }
+        .badge-low { background: #e6f4ea; color: #42b72a; }
+
+        /* Automation badges */
+        .automation-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 700;
+            margin-left: 5px;
+        }
+        .badge-auto {
+            background: #e6f4ea;
+            color: #1e7e34;
+            border: 1px solid #42b72a;
+        }
+        .badge-manual {
+            background: #fef3cd;
+            color: #856404;
+            border: 1px solid #f5a623;
+        }
+
+        /* Confidence badges */
+        .confidence-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 9px;
+            font-weight: 600;
+            margin-left: 5px;
+        }
+        .conf-high {
+            background: #d4edda;
+            color: #155724;
+        }
+        .conf-moderate {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        /* Total impact section */
+        .total-impact-summary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+        .total-impact-summary h2 {
+            color: white;
+            border-bottom: 2px solid rgba(255,255,255,0.3);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .total-impact-summary .metrics-grid {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+        .total-impact-summary .metric-card {
+            background: rgba(255,255,255,0.15);
+        }
+        .total-impact-summary .sub {
+            opacity: 0.9;
+        }
+
+        /* Manual explanation */
+        .manual-explanation {
+            background: #fff3cd;
+            border-left: 3px solid #ffc107;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #856404;
+        }
+
+        /* Formula display */
+        .formula-explain {
+            background: #f8f9fa;
+            border-left: 3px solid #1877F2;
+            padding: 8px;
+            margin-top: 8px;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+            color: #495057;
+        }
+
+        /* Demographics heatmap */
+        .demo-grid {
+            display: grid;
+            grid-template-columns: auto repeat(3, 1fr);
+            gap: 2px;
+            font-size: 12px;
+        }
+        .demo-cell {
+            padding: 8px;
+            text-align: center;
+            border-radius: 4px;
+        }
+        .demo-header { background: #f0f2f5; font-weight: 600; color: #65676b; }
+        .demo-label { background: #f0f2f5; font-weight: 600; text-align: left; padding-left: 12px; }
+
+        /* Scroll wrapper for tables */
+        .table-wrapper { overflow-x: auto; }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 20px 0;
+            color: #65676b;
+            font-size: 12px;
+            border-top: 1px solid #e4e6eb;
+            margin-top: 30px;
+        }
+
+        /* Print */
+        @media print {
+            body { padding: 0; background: white; }
+            .container { box-shadow: none; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+
+    <!-- Header -->
+    <div class="header">
+        <span class="platform-badge">FACEBOOK / META ADS</span>
+        <h1>Ads Insights Dashboard</h1>
+        <div class="account-name">Yap Chan Kor</div>
+        <div class="subtitle">
+            2026-04-29 to 2026-04-30
+            &nbsp;|&nbsp; Account: act_717673122125428
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="metrics-grid">
+        <div class="metric-card bg-blue">
+            <h3>Total Spend</h3>
+            <div class="value">RM 271.86</div>
+        </div>
+        <div class="metric-card bg-green">
+            <h3>Conversions</h3>
+            <div class="value">177</div>
+            <div class="sub">CPA: RM 1.54</div>
+        </div>
+        <div class="metric-card bg-purple">
+            <h3>Reach</h3>
+            <div class="value">11,847</div>
+            <div class="sub">Unique people</div>
+        </div>
+        <div class="metric-card bg-amber">
+            <h3>Frequency</h3>
+            <div class="value">1.2x</div>
+            <div class="sub">Avg impressions/person</div>
+        </div>
+        <div class="metric-card bg-teal">
+            <h3>CTR</h3>
+            <div class="value">2.87%</div>
+            <div class="sub">Good</div>
+        </div>
+        <div class="metric-card bg-pink">
+            <h3>CPM</h3>
+            <div class="value">RM 19.12</div>
+            <div class="sub">Cost per 1,000 impressions</div>
+        </div>
+        <div class="metric-card bg-orange">
+            <h3>Clicks</h3>
+            <div class="value">408</div>
+            <div class="sub">CPC: RM 0.67</div>
+        </div>
+    </div>
+
+    <div class="ai-summary">
+        <strong>&#129302; AI Insights Summary</strong><br><br>
+        Your Facebook Ads generated 177 conversions from MYR 271.86 spend, with an average CPA of MYR 1.54. Best performing platform: Instagram with CPA of MYR 1.37.
+    </div>
+
+    <div class="section">
+        <h2>Campaign Performance</h2>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Campaign</th>
+                    <th>Status</th>
+                    <th>Objective</th>
+                    <th class="text-right">Spend</th>
+                    <th class="text-right">Reach</th>
+                    <th class="text-right">Freq</th>
+                    <th class="text-right">Clicks</th>
+                    <th class="text-right">CTR</th>
+                    <th class="text-right">Conv</th>
+                    <th class="text-right">CPA</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr>
+                    <td><strong>MY_YCKxKB_Leads_Prospecting_$43_$1290_IF_SI+V_17032026</strong></td>
+                    <td><span class="status status-active">ACTIVE</span></td>
+                    <td>Leads</td>
+                    <td class="text-right">RM 80.02</td>
+                    <td class="text-right">4,070</td>
+                    <td class="text-right">1.1</td>
+                    <td class="text-right">140</td>
+                    <td class="text-right">3.06%</td>
+                    <td class="text-right">17</td>
+                    <td class="text-right color-good">RM 4.71</td>
+                </tr>
+
+                <tr>
+                    <td><strong>KY 21 Jan Traffic (Whatapps) – Young people</strong></td>
+                    <td><span class="status status-active">ACTIVE</span></td>
+                    <td>Link_Clicks</td>
+                    <td class="text-right">RM 62.82</td>
+                    <td class="text-right">4,334</td>
+                    <td class="text-right">1.2</td>
+                    <td class="text-right">124</td>
+                    <td class="text-right">2.49%</td>
+                    <td class="text-right">92</td>
+                    <td class="text-right color-good">RM 0.68</td>
+                </tr>
+
+                <tr>
+                    <td><strong>MY_YCKxKB_Engagement_Prospecting_$33_$363_MSG_SI+V_20042026</strong></td>
+                    <td><span class="status status-active">ACTIVE</span></td>
+                    <td>Engagement</td>
+                    <td class="text-right">RM 60.02</td>
+                    <td class="text-right">1,355</td>
+                    <td class="text-right">1.6</td>
+                    <td class="text-right">62</td>
+                    <td class="text-right">2.94%</td>
+                    <td class="text-right">34</td>
+                    <td class="text-right color-good">RM 1.77</td>
+                </tr>
+
+                <tr>
+                    <td><strong>KY 21 Jan Traffic (Whatapps) – Old</strong></td>
+                    <td><span class="status status-active">ACTIVE</span></td>
+                    <td>Link_Clicks</td>
+                    <td class="text-right">RM 42.98</td>
+                    <td class="text-right">1,096</td>
+                    <td class="text-right">1.2</td>
+                    <td class="text-right">60</td>
+                    <td class="text-right">4.44%</td>
+                    <td class="text-right">22</td>
+                    <td class="text-right color-good">RM 1.95</td>
+                </tr>
+
+                <tr>
+                    <td><strong>KY 20 Feb Traffic (Whatapps) – Eng</strong></td>
+                    <td><span class="status status-active">ACTIVE</span></td>
+                    <td>Link_Clicks</td>
+                    <td class="text-right">RM 26.02</td>
+                    <td class="text-right">992</td>
+                    <td class="text-right">1.2</td>
+                    <td class="text-right">22</td>
+                    <td class="text-right">1.85%</td>
+                    <td class="text-right">12</td>
+                    <td class="text-right color-good">RM 2.17</td>
+                </tr>
+
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Ad Set Performance</h2>
+        <p class="description">Ad sets with their targeting summary and performance metrics.</p>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Ad Set</th>
+                    <th>Campaign</th>
+                    <th>Targeting</th>
+                    <th class="text-right">Spend</th>
+                    <th class="text-right">Clicks</th>
+                    <th class="text-right">CTR</th>
+                    <th class="text-right">Conv</th>
+                    <th class="text-right">CPA</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr>
+                    <td><strong>MY_YCKxKB_IF_MaxLeads_SavedAudience_YCKMar26</strong></td>
+                    <td>MY_YCKxKB_Leads_Prospecting_$43_$1290_IF_SI+V_17032026</td>
+                    <td style="font-size:11px;color:#65676b;"></td>
+                    <td class="text-right">RM 80.02</td>
+                    <td class="text-right">140</td>
+                    <td class="text-right">3.06%</td>
+                    <td class="text-right">17</td>
+                    <td class="text-right">RM 4.71</td>
+                </tr>
+
+                <tr>
+                    <td><strong>KY 5 Aug Traffic WA_Young</strong></td>
+                    <td>KY 21 Jan Traffic (Whatapps) – Young people</td>
+                    <td style="font-size:11px;color:#65676b;"></td>
+                    <td class="text-right">RM 62.82</td>
+                    <td class="text-right">124</td>
+                    <td class="text-right">2.49%</td>
+                    <td class="text-right">92</td>
+                    <td class="text-right">RM 0.68</td>
+                </tr>
+
+                <tr>
+                    <td><strong>MY_YCKxKB_WhatsApp_MaxConv_SavedAudience_YCKApr26</strong></td>
+                    <td>MY_YCKxKB_Engagement_Prospecting_$33_$363_MSG_SI+V_20042026</td>
+                    <td style="font-size:11px;color:#65676b;"></td>
+                    <td class="text-right">RM 60.02</td>
+                    <td class="text-right">62</td>
+                    <td class="text-right">2.94%</td>
+                    <td class="text-right">34</td>
+                    <td class="text-right">RM 1.77</td>
+                </tr>
+
+                <tr>
+                    <td><strong>KY 4 Aug Traffic WA_Old people</strong></td>
+                    <td>KY 21 Jan Traffic (Whatapps) – Old</td>
+                    <td style="font-size:11px;color:#65676b;"></td>
+                    <td class="text-right">RM 42.98</td>
+                    <td class="text-right">60</td>
+                    <td class="text-right">4.44%</td>
+                    <td class="text-right">22</td>
+                    <td class="text-right">RM 1.95</td>
+                </tr>
+
+                <tr>
+                    <td><strong>KY 20 Feb Traffic WA_Eng</strong></td>
+                    <td>KY 20 Feb Traffic (Whatapps) – Eng</td>
+                    <td style="font-size:11px;color:#65676b;"></td>
+                    <td class="text-right">RM 26.02</td>
+                    <td class="text-right">22</td>
+                    <td class="text-right">1.85%</td>
+                    <td class="text-right">12</td>
+                    <td class="text-right">RM 2.17</td>
+                </tr>
+
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Placement Performance</h2>
+        <p class="description">Performance across Facebook, Instagram, Audience Network, and Messenger.</p>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Placement</th>
+                    <th class="text-right">Spend</th>
+                    <th class="text-right">Clicks</th>
+                    <th class="text-right">CTR</th>
+                    <th class="text-right">CPM</th>
+                    <th class="text-right">Conv</th>
+                    <th class="text-right">CPA</th>
+                    <th>Efficiency</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr>
+                    <td><strong>Facebook - Facebook Reels</strong></td>
+                    <td class="text-right">RM 108.65</td>
+                    <td class="text-right">176</td>
+                    <td class="text-right">2.84%</td>
+                    <td class="text-right">RM 17.55</td>
+                    <td class="text-right">63</td>
+                    <td class="text-right">RM 1.72</td>
+                    <td><span class="color-good">Good</span></td>
+                </tr>
+
+                <tr>
+                    <td><strong>Facebook - Feed</strong></td>
+                    <td class="text-right">RM 78.61</td>
+                    <td class="text-right">146</td>
+                    <td class="text-right">4.06%</td>
+                    <td class="text-right">RM 21.88</td>
+                    <td class="text-right">55</td>
+                    <td class="text-right">RM 1.43</td>
+                    <td><span class="color-good">Good</span></td>
+                </tr>
+
+                <tr>
+                    <td><strong>Instagram - Instagram Reels</strong></td>
+                    <td class="text-right">RM 36.92</td>
+                    <td class="text-right">29</td>
+                    <td class="text-right">1.31%</td>
+                    <td class="text-right">RM 16.67</td>
+                    <td class="text-right">23</td>
+                    <td class="text-right">RM 1.61</td>
+                    <td><span class="color-good">Good</span></td>
+                </tr>
+
+                <tr>
+                    <td><strong>Instagram - Feed</strong></td>
+                    <td class="text-right">RM 18.47</td>
+                    <td class="text-right">16</td>
+                    <td class="text-right">1.68%</td>
+                    <td class="text-right">RM 19.42</td>
+                    <td class="text-right">14</td>
+                    <td class="text-right">RM 1.32</td>
+                    <td><span class="color-good">Good</span></td>
+                </tr>
+
+                <tr>
+                    <td><strong>Instagram - Instagram Stories</strong></td>
+                    <td class="text-right">RM 14.60</td>
+                    <td class="text-right">19</td>
+                    <td class="text-right">3.07%</td>
+                    <td class="text-right">RM 23.63</td>
+                    <td class="text-right">14</td>
+                    <td class="text-right">RM 1.04</td>
+                    <td><span class="color-good">Good</span></td>
+                </tr>
+
+                <tr>
+                    <td><strong>Facebook - Facebook Stories</strong></td>
+                    <td class="text-right">RM 12.17</td>
+                    <td class="text-right">16</td>
+                    <td class="text-right">6.15%</td>
+                    <td class="text-right">RM 46.81</td>
+                    <td class="text-right">8</td>
+                    <td class="text-right">RM 1.52</td>
+                    <td><span class="color-good">Good</span></td>
+                </tr>
+
+                <tr>
+                    <td><strong>Facebook - Facebook Reels Overlay</strong></td>
+                    <td class="text-right">RM 1.19</td>
+                    <td class="text-right">3</td>
+                    <td class="text-right">1.03%</td>
+                    <td class="text-right">RM 4.10</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.00</td>
+                    <td><span class="color-ok">Average</span></td>
+                </tr>
+
+                <tr>
+                    <td><strong>Facebook - Search</strong></td>
+                    <td class="text-right">RM 0.65</td>
+                    <td class="text-right">2</td>
+                    <td class="text-right">11.11%</td>
+                    <td class="text-right">RM 36.12</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.00</td>
+                    <td><span class="color-ok">Average</span></td>
+                </tr>
+
+                <tr>
+                    <td><strong>Facebook - Instream Video</strong></td>
+                    <td class="text-right">RM 0.59</td>
+                    <td class="text-right">1</td>
+                    <td class="text-right">1.18%</td>
+                    <td class="text-right">RM 6.94</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.00</td>
+                    <td><span class="color-ok">Average</span></td>
+                </tr>
+
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Demographic Performance</h2>
+        <p class="description">Spend and conversions by age and gender. Red = high spend, no conversions.</p>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Age / Gender</th>
+                    <th class="text-right">Female Spend</th>
+                    <th class="text-right">Female Conv</th>
+                    <th class="text-right">Male Spend</th>
+                    <th class="text-right">Male Conv</th>
+                    <th class="text-right">Unknown Spend</th>
+                    <th class="text-right">Unknown Conv</th>
+
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>18-24</strong></td>
+                    <td class="text-right ">RM 1.01</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right ">RM 1.67</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right ">RM 0.06</td>
+                    <td class="text-right">0</td>
+                </tr>
+                <tr>
+                    <td><strong>25-34</strong></td>
+                    <td class="text-right color-good">RM 9.22</td>
+                    <td class="text-right">11</td>
+                    <td class="text-right color-good">RM 26.22</td>
+                    <td class="text-right">32</td>
+                    <td class="text-right ">RM 0.30</td>
+                    <td class="text-right">0</td>
+                </tr>
+                <tr>
+                    <td><strong>35-44</strong></td>
+                    <td class="text-right color-good">RM 19.01</td>
+                    <td class="text-right">8</td>
+                    <td class="text-right color-good">RM 36.46</td>
+                    <td class="text-right">29</td>
+                    <td class="text-right ">RM 0.54</td>
+                    <td class="text-right">0</td>
+                </tr>
+                <tr>
+                    <td><strong>45-54</strong></td>
+                    <td class="text-right color-good">RM 24.67</td>
+                    <td class="text-right">23</td>
+                    <td class="text-right color-good">RM 42.54</td>
+                    <td class="text-right">18</td>
+                    <td class="text-right ">RM 0.61</td>
+                    <td class="text-right">0</td>
+                </tr>
+                <tr>
+                    <td><strong>55-64</strong></td>
+                    <td class="text-right color-good">RM 19.40</td>
+                    <td class="text-right">10</td>
+                    <td class="text-right color-good">RM 32.35</td>
+                    <td class="text-right">15</td>
+                    <td class="text-right ">RM 0.73</td>
+                    <td class="text-right">0</td>
+                </tr>
+                <tr>
+                    <td><strong>65+</strong></td>
+                    <td class="text-right color-good">RM 18.27</td>
+                    <td class="text-right">14</td>
+                    <td class="text-right color-good">RM 38.42</td>
+                    <td class="text-right">17</td>
+                    <td class="text-right ">RM 0.38</td>
+                    <td class="text-right">0</td>
+                </tr>
+                <tr>
+                    <td><strong>Unknown</strong></td>
+                    <td class="text-right ">RM 0.00</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right ">RM 0.00</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right ">RM 0.00</td>
+                    <td class="text-right">0</td>
+                </tr>
+
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Geographic Performance</h2>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Location</th>
+                    <th class="text-right">Clicks</th>
+                    <th class="text-right">Spend</th>
+                    <th class="text-right">Conv</th>
+                    <th class="text-right">CPA</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr>
+                    <td><strong>Selangor, MY</strong></td>
+                    <td class="text-right">259</td>
+                    <td class="text-right ">RM 191.53</td>
+                    <td class="text-right">83</td>
+                    <td class="text-right">RM 2.31</td>
+                </tr>
+
+                <tr>
+                    <td><strong>Kuala Lumpur, MY</strong></td>
+                    <td class="text-right">145</td>
+                    <td class="text-right ">RM 78.11</td>
+                    <td class="text-right">32</td>
+                    <td class="text-right">RM 2.44</td>
+                </tr>
+
+                <tr>
+                    <td><strong>Putrajaya, MY</strong></td>
+                    <td class="text-right">4</td>
+                    <td class="text-right ">RM 2.22</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">-</td>
+                </tr>
+
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Time Performance</h2>
+        <p class="description">Hourly and daily performance patterns.</p>
+
+        <h3 style="font-size:15px;margin:10px 0;">Hourly Performance</h3>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Hour</th>
+                    <th class="text-right">Clicks</th>
+                    <th class="text-right">Spend</th>
+                    <th class="text-right">Conv</th>
+                    <th class="text-right">CPA</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr>
+                    <td><strong>00:00</strong></td>
+                    <td class="text-right">23</td>
+                    <td class="text-right">RM 14.50</td>
+                    <td class="text-right">12</td>
+                    <td class="text-right">RM 1.21</td>
+                </tr>
+
+                <tr>
+                    <td><strong>01:00</strong></td>
+                    <td class="text-right">14</td>
+                    <td class="text-right">RM 8.08</td>
+                    <td class="text-right">1</td>
+                    <td class="text-right">RM 8.08</td>
+                </tr>
+
+                <tr>
+                    <td><strong>02:00</strong></td>
+                    <td class="text-right">11</td>
+                    <td class="text-right">RM 5.13</td>
+                    <td class="text-right">7</td>
+                    <td class="text-right">RM 0.73</td>
+                </tr>
+
+                <tr>
+                    <td><strong>03:00</strong></td>
+                    <td class="text-right">8</td>
+                    <td class="text-right">RM 3.78</td>
+                    <td class="text-right">4</td>
+                    <td class="text-right">RM 0.94</td>
+                </tr>
+
+                <tr>
+                    <td><strong>04:00</strong></td>
+                    <td class="text-right">7</td>
+                    <td class="text-right">RM 3.02</td>
+                    <td class="text-right">3</td>
+                    <td class="text-right">RM 1.01</td>
+                </tr>
+
+                <tr>
+                    <td><strong>05:00</strong></td>
+                    <td class="text-right">6</td>
+                    <td class="text-right">RM 5.22</td>
+                    <td class="text-right">1</td>
+                    <td class="text-right">RM 5.22</td>
+                </tr>
+
+                <tr>
+                    <td><strong>06:00</strong></td>
+                    <td class="text-right">10</td>
+                    <td class="text-right">RM 9.38</td>
+                    <td class="text-right">3</td>
+                    <td class="text-right">RM 3.13</td>
+                </tr>
+
+                <tr>
+                    <td><strong>07:00</strong></td>
+                    <td class="text-right">13</td>
+                    <td class="text-right">RM 10.63</td>
+                    <td class="text-right">3</td>
+                    <td class="text-right">RM 3.54</td>
+                </tr>
+
+                <tr>
+                    <td><strong>08:00</strong></td>
+                    <td class="text-right">18</td>
+                    <td class="text-right">RM 12.03</td>
+                    <td class="text-right">10</td>
+                    <td class="text-right">RM 1.20</td>
+                </tr>
+
+                <tr>
+                    <td><strong>09:00</strong></td>
+                    <td class="text-right">11</td>
+                    <td class="text-right">RM 9.27</td>
+                    <td class="text-right">3</td>
+                    <td class="text-right">RM 3.09</td>
+                </tr>
+
+                <tr>
+                    <td><strong>10:00</strong></td>
+                    <td class="text-right">26</td>
+                    <td class="text-right">RM 9.42</td>
+                    <td class="text-right">11</td>
+                    <td class="text-right">RM 0.86</td>
+                </tr>
+
+                <tr>
+                    <td><strong>11:00</strong></td>
+                    <td class="text-right">14</td>
+                    <td class="text-right">RM 10.93</td>
+                    <td class="text-right">15</td>
+                    <td class="text-right">RM 0.73</td>
+                </tr>
+
+                <tr>
+                    <td><strong>12:00</strong></td>
+                    <td class="text-right">19</td>
+                    <td class="text-right">RM 15.67</td>
+                    <td class="text-right">14</td>
+                    <td class="text-right">RM 1.12</td>
+                </tr>
+
+                <tr>
+                    <td><strong>13:00</strong></td>
+                    <td class="text-right">20</td>
+                    <td class="text-right">RM 8.99</td>
+                    <td class="text-right">7</td>
+                    <td class="text-right">RM 1.28</td>
+                </tr>
+
+                <tr>
+                    <td><strong>14:00</strong></td>
+                    <td class="text-right">17</td>
+                    <td class="text-right">RM 12.40</td>
+                    <td class="text-right">8</td>
+                    <td class="text-right">RM 1.55</td>
+                </tr>
+
+                <tr>
+                    <td><strong>15:00</strong></td>
+                    <td class="text-right">14</td>
+                    <td class="text-right">RM 14.51</td>
+                    <td class="text-right">11</td>
+                    <td class="text-right">RM 1.32</td>
+                </tr>
+
+                <tr>
+                    <td><strong>16:00</strong></td>
+                    <td class="text-right">28</td>
+                    <td class="text-right">RM 16.45</td>
+                    <td class="text-right">8</td>
+                    <td class="text-right">RM 2.06</td>
+                </tr>
+
+                <tr>
+                    <td><strong>17:00</strong></td>
+                    <td class="text-right">17</td>
+                    <td class="text-right">RM 15.76</td>
+                    <td class="text-right">12</td>
+                    <td class="text-right">RM 1.31</td>
+                </tr>
+
+                <tr>
+                    <td><strong>18:00</strong></td>
+                    <td class="text-right">22</td>
+                    <td class="text-right">RM 12.39</td>
+                    <td class="text-right">5</td>
+                    <td class="text-right">RM 2.48</td>
+                </tr>
+
+                <tr>
+                    <td><strong>19:00</strong></td>
+                    <td class="text-right">22</td>
+                    <td class="text-right">RM 11.84</td>
+                    <td class="text-right">1</td>
+                    <td class="text-right">RM 11.84</td>
+                </tr>
+
+                <tr>
+                    <td><strong>20:00</strong></td>
+                    <td class="text-right">17</td>
+                    <td class="text-right">RM 13.73</td>
+                    <td class="text-right">9</td>
+                    <td class="text-right">RM 1.53</td>
+                </tr>
+
+                <tr>
+                    <td><strong>21:00</strong></td>
+                    <td class="text-right">22</td>
+                    <td class="text-right">RM 16.18</td>
+                    <td class="text-right">10</td>
+                    <td class="text-right">RM 1.62</td>
+                </tr>
+
+                <tr>
+                    <td><strong>22:00</strong></td>
+                    <td class="text-right">25</td>
+                    <td class="text-right">RM 16.54</td>
+                    <td class="text-right">9</td>
+                    <td class="text-right">RM 1.84</td>
+                </tr>
+
+                <tr>
+                    <td><strong>23:00</strong></td>
+                    <td class="text-right">24</td>
+                    <td class="text-right">RM 16.01</td>
+                    <td class="text-right">10</td>
+                    <td class="text-right">RM 1.60</td>
+                </tr>
+
+            </tbody>
+        </table>
+        </div>
+
+        <h3 style="font-size:15px;margin:15px 0 10px;">Day of Week Performance</h3>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Day</th>
+                    <th class="text-right">Clicks</th>
+                    <th class="text-right">Spend</th>
+                    <th class="text-right">Conv</th>
+                    <th class="text-right">CPA</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr>
+                    <td><strong>Monday</strong></td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.00</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">-</td>
+                </tr>
+
+                <tr>
+                    <td><strong>Tuesday</strong></td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.00</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">-</td>
+                </tr>
+
+                <tr>
+                    <td><strong>Wednesday</strong></td>
+                    <td class="text-right">211</td>
+                    <td class="text-right">RM 139.48</td>
+                    <td class="text-right">92</td>
+                    <td class="text-right">RM 1.52</td>
+                </tr>
+
+                <tr>
+                    <td><strong>Thursday</strong></td>
+                    <td class="text-right">197</td>
+                    <td class="text-right">RM 132.38</td>
+                    <td class="text-right">85</td>
+                    <td class="text-right">RM 1.56</td>
+                </tr>
+
+                <tr>
+                    <td><strong>Friday</strong></td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.00</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">-</td>
+                </tr>
+
+                <tr>
+                    <td><strong>Saturday</strong></td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.00</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">-</td>
+                </tr>
+
+                <tr>
+                    <td><strong>Sunday</strong></td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.00</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">-</td>
+                </tr>
+
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="total-impact-summary">
+        <h2>📊 Total Expected Impact</h2>
+        <p style="opacity: 0.9; margin-bottom: 20px;">
+            Aggregate projected benefits from implementing all 10 recommendations.
+            Using <strong>moderate</strong> confidence (70% of maximum).
+        </p>
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <h3>Monthly Savings</h3>
+                <div class="value">RM 0</div>
+                <div class="sub">From eliminating waste</div>
+            </div>
+            <div class="metric-card">
+                <h3>Additional Conversions</h3>
+                <div class="value">174</div>
+                <div class="sub">Monthly projection</div>
+            </div>
+            <div class="metric-card">
+                <h3>Additional Revenue</h3>
+                <div class="value">RM 211</div>
+                <div class="sub">From scaling winners</div>
+            </div>
+            <div class="metric-card">
+                <h3>Net Monthly Benefit</h3>
+                <div class="value">RM 134</div>
+                <div class="sub">Total value unlock</div>
+            </div>
+        </div>
+        <p style="margin-top: 20px; font-size: 13px; opacity: 0.85;">
+            <strong>Automation Status:</strong> 7 auto-actionable, 3 manual required
+        </p>
+    </div>
+
+    <div class="section">
+        <h2>Optimization Recommendations</h2>
+        <p class="description">Actionable recommendations sorted by priority. Apply these to improve performance.</p>
+        <div class="rec-grid">
+
+            <div class="rec-card priority-high">
+                <div class="rec-header">
+                    <h4>1. Scale budget for KY 21 Jan Traffic (Whatapps) – Young people</h4>
+                    <div>
+                        <span class="badge badge-high">HIGH</span>
+                        <span class="automation-badge badge-auto">✓ AUTO</span>
+                        <span class="confidence-badge conf-moderate">70%</span>
+                    </div>
+                </div>
+                <p>CPA MYR 0.68 is 55.5% below account average. Conversion rate 74.19% with 92 conversions.</p>
+                <div class="impact">Expected: +73.6 conversions/month, +MYR 150.77 revenue (70% confidence)</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>92.0 conv × 20% growth × RM 2 (estimated 3× CPA) - 18.4 conv × RM 0.75 CPA
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-high">
+                <div class="rec-header">
+                    <h4>2. Scale budget for KY 5 Aug Traffic WA_Young</h4>
+                    <div>
+                        <span class="badge badge-high">HIGH</span>
+                        <span class="automation-badge badge-auto">✓ AUTO</span>
+                        <span class="confidence-badge conf-moderate">70%</span>
+                    </div>
+                </div>
+                <p>CPA MYR 0.68 is 55.5% below account average. Conversion rate 74.19% with 92 conversions.</p>
+                <div class="impact">Expected: +73.6 conversions/month, +MYR 150.77 revenue (70% confidence)</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>92.0 conv × 20% growth × RM 2 (estimated 3× CPA) - 18.4 conv × RM 0.75 CPA
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-high">
+                <div class="rec-header">
+                    <h4>3. Switch KY 21 Jan Traffic (Whatapps) – Young people to CONVERSIONS / LEADS</h4>
+                    <div>
+                        <span class="badge badge-high">HIGH</span>
+                        <span class="automation-badge badge-manual">⚠ MANUAL</span>
+                        <span class="confidence-badge conf-moderate">65%</span>
+                    </div>
+                </div>
+                <p>Generating 92 conversions despite LINK_CLICKS objective</p>
+                <div class="impact">Expected: Better optimization, ~20% lower CPA (65% confidence)</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>Estimated 20% CPA improvement from proper objective alignment
+                </div>
+
+                <div class="manual-explanation">
+                    <strong>Why Manual?</strong> Facebook API doesn't allow changing campaign objectives post-creation
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-high">
+                <div class="rec-header">
+                    <h4>4. Switch MY_YCKxKB_Engagement_Prospecting_$33_$363_MSG_SI+V_20042026 to CONVERSIONS / LEADS</h4>
+                    <div>
+                        <span class="badge badge-high">HIGH</span>
+                        <span class="automation-badge badge-manual">⚠ MANUAL</span>
+                        <span class="confidence-badge conf-moderate">65%</span>
+                    </div>
+                </div>
+                <p>Generating 34 conversions despite OUTCOME_ENGAGEMENT objective</p>
+                <div class="impact">Expected: Better optimization, ~20% lower CPA (65% confidence)</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>Estimated 20% CPA improvement from proper objective alignment
+                </div>
+
+                <div class="manual-explanation">
+                    <strong>Why Manual?</strong> Facebook API doesn't allow changing campaign objectives post-creation
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-medium">
+                <div class="rec-header">
+                    <h4>5. A/B Test: Cta Test</h4>
+                    <div>
+                        <span class="badge badge-medium">MEDIUM</span>
+                        <span class="automation-badge badge-manual">⚠ MANUAL</span>
+                        <span class="confidence-badge conf-moderate">60%</span>
+                    </div>
+                </div>
+                <p>Best CTA 'WHATSAPP_MESSAGE' outperforms 'BOOK_TRAVEL' (66.35% vs 12.14% conversion rate). Test more ads with 'WHATSAPP_MESSAGE' CTA.</p>
+                <div class="impact">Expected: Improve CTR and conversion rate through systematic testing (10-30% potential uplift)</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>A/B testing can yield 10-30% CTR improvements
+                </div>
+
+                <div class="manual-explanation">
+                    <strong>Why Manual?</strong> A/B testing requires human creativity for new ad variations
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-low">
+                <div class="rec-header">
+                    <h4>6. Review overspend on MY_YCKxKB_Leads_Prospecting_$43_$1290_IF_SI+V_17032026</h4>
+                    <div>
+                        <span class="badge badge-low">LOW</span>
+                        <span class="automation-badge badge-auto">✓ AUTO</span>
+                        <span class="confidence-badge conf-moderate">50%</span>
+                    </div>
+                </div>
+                <p>Spending 186% of budget. Check campaign performance.</p>
+                <div class="impact">Expected: Better budget control</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>Informational - review needed
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-low">
+                <div class="rec-header">
+                    <h4>7. Review overspend on KY 21 Jan Traffic (Whatapps) – Young people</h4>
+                    <div>
+                        <span class="badge badge-low">LOW</span>
+                        <span class="automation-badge badge-auto">✓ AUTO</span>
+                        <span class="confidence-badge conf-moderate">50%</span>
+                    </div>
+                </div>
+                <p>Spending 180% of budget. Check campaign performance.</p>
+                <div class="impact">Expected: Better budget control</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>Informational - review needed
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-low">
+                <div class="rec-header">
+                    <h4>8. Review overspend on MY_YCKxKB_Engagement_Prospecting_$33_$363_MSG_SI+V_20042026</h4>
+                    <div>
+                        <span class="badge badge-low">LOW</span>
+                        <span class="automation-badge badge-auto">✓ AUTO</span>
+                        <span class="confidence-badge conf-moderate">50%</span>
+                    </div>
+                </div>
+                <p>Spending 182% of budget. Check campaign performance.</p>
+                <div class="impact">Expected: Better budget control</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>Informational - review needed
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-low">
+                <div class="rec-header">
+                    <h4>9. Review overspend on KY 21 Jan Traffic (Whatapps) – Old</h4>
+                    <div>
+                        <span class="badge badge-low">LOW</span>
+                        <span class="automation-badge badge-auto">✓ AUTO</span>
+                        <span class="confidence-badge conf-moderate">50%</span>
+                    </div>
+                </div>
+                <p>Spending 172% of budget. Check campaign performance.</p>
+                <div class="impact">Expected: Better budget control</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>Informational - review needed
+                </div>
+
+            </div>
+
+            <div class="rec-card priority-low">
+                <div class="rec-header">
+                    <h4>10. Review overspend on KY 20 Feb Traffic (Whatapps) – Eng</h4>
+                    <div>
+                        <span class="badge badge-low">LOW</span>
+                        <span class="automation-badge badge-auto">✓ AUTO</span>
+                        <span class="confidence-badge conf-moderate">50%</span>
+                    </div>
+                </div>
+                <p>Spending 174% of budget. Check campaign performance.</p>
+                <div class="impact">Expected: Better budget control</div>
+
+                <div class="formula-explain">
+                    <span style="margin-right: 5px;">📊</span>Informational - review needed
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Landing Page Performance</h2>
+        <div class="table-wrapper">
+        <table>
+            <thead>
+                <tr>
+                    <th>Landing Page URL</th>
+                    <th class="text-right">Clicks</th>
+                    <th class="text-right">Spend</th>
+                    <th class="text-right">Conv</th>
+                    <th class="text-right">Conv Rate</th>
+                </tr>
+            </thead>
+            <tbody>
+
+                <tr>
+                    <td>(no URL)</td>
+                    <td class="text-right">346</td>
+                    <td class="text-right">RM 211.61</td>
+                    <td class="text-right">143</td>
+                    <td class="text-right color-good">41.3%</td>
+                </tr>
+
+                <tr>
+                    <td>https://api.whatsapp.com/send</td>
+                    <td class="text-right">62</td>
+                    <td class="text-right">RM 60.02</td>
+                    <td class="text-right">34</td>
+                    <td class="text-right color-good">54.8%</td>
+                </tr>
+
+                <tr>
+                    <td>http://fb.me</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right">RM 0.23</td>
+                    <td class="text-right">0</td>
+                    <td class="text-right color-bad">0.0%</td>
+                </tr>
+
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>Generated on April 30, 2026 at 18:38 | Facebook Ads Insights Dashboard</p>
+        <p style="margin-top:5px;">
+            <button class="no-print" onclick="window.print()" style="padding:8px 20px;background:#1877F2;color:white;border:none;border-radius:5px;cursor:pointer;font-size:13px;">
+                Print / Save PDF
+            </button>
+        </p>
+    </div>
+
+</div>
+</body>
+</html>

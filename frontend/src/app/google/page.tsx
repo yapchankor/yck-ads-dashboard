@@ -138,12 +138,44 @@ export default function GoogleAdsPage() {
   const [refreshingRange, setRefreshingRange] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [ignoredQueries, setIgnoredQueries] = useState<Set<string>>(new Set());
+  const [queryActions, setQueryActions] = useState<Record<string, "applying" | "applied" | "error">>({});
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("ignored_queries");
+      if (stored) setIgnoredQueries(new Set(JSON.parse(stored)));
+    } catch {}
+  }, []);
 
   useEffect(() => {
     fetchDashboardData()
       .then(json => { setD(json); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
   }, []);
+
+  async function applyNegativeKeyword(keyword: string, campaignId: string, matchType = "broad") {
+    const key = `${keyword}__${campaignId}`;
+    setQueryActions(prev => ({ ...prev, [key]: "applying" }));
+    try {
+      const res = await fetch("/api/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action_type: "add_negative_keyword", keyword, campaign_id: campaignId, match_type: matchType }),
+      });
+      if (!res.ok) throw new Error();
+      setQueryActions(prev => ({ ...prev, [key]: "applied" }));
+    } catch {
+      setQueryActions(prev => ({ ...prev, [key]: "error" }));
+    }
+  }
+
+  function ignoreQuery(query: string) {
+    const next = new Set(ignoredQueries);
+    next.add(query);
+    setIgnoredQueries(next);
+    localStorage.setItem("ignored_queries", JSON.stringify([...next]));
+  }
 
   async function handleRangeChange(range: DateRangeSelection) {
     if (!d) return;
@@ -236,6 +268,59 @@ export default function GoogleAdsPage() {
   const deviceRows: any[] = Array.isArray(googleDevice.devices) ? googleDevice.devices : [];
   const geoSummary = d.google_geo_analysis?.summary || {};
 
+  function classifyGCampaign(allCampaigns: any[], row: any): { text: string; color: string } | null {
+    const isActive = row.status === "Active" || String(row.status || "").toUpperCase() === "ENABLED";
+    if (!isActive) return null;
+    const withConv = allCampaigns.filter((c: any) => c.conversions > 0 && c.spend > 0);
+    const avg = withConv.length > 0 ? withConv.reduce((s: number, c: any) => s + c.cpa, 0) / withConv.length : 0;
+    if (row.spend > 20 && row.conversions === 0) return { text: "Spending, no conversions", color: "bg-red-100 text-red-700" };
+    if (avg > 0 && row.conversions >= 2 && row.cpa <= avg * 0.75) return { text: "Top performer", color: "bg-green-100 text-green-700" };
+    if (avg > 0 && row.cpa > avg * 1.5) return { text: "High CPA", color: "bg-amber-100 text-amber-700" };
+    return null;
+  }
+
+  function findCampaignId(campaignName: string): string {
+    const match = googleCampaigns.find((c: any) => c.name === campaignName);
+    return match ? String(match.id || match.campaign_id || "") : "";
+  }
+
+  const googleAnomalyAlerts: { severity: "warn" | "critical"; title: string; message: string; action?: string }[] = [];
+  const gZeroConvActive = googleCampaigns.filter((c: any) =>
+    (c.status === "Active" || String(c.status || "").toUpperCase() === "ENABLED") && c.spend > 50 && c.conversions === 0
+  );
+  if (gZeroConvActive.length > 0) {
+    const wastedSpend = gZeroConvActive.reduce((s: number, c: any) => s + c.spend, 0);
+    googleAnomalyAlerts.push({
+      severity: wastedSpend > 300 ? "critical" : "warn",
+      title: `${gZeroConvActive.length} active campaign${gZeroConvActive.length > 1 ? "s" : ""} spending with zero conversions`,
+      message: `${fmtMYR(wastedSpend)} spent with no tracked results.`,
+      action: "Review conversion tracking or pause underperforming campaigns to stop wasted spend.",
+    });
+  }
+  const gHighCpaC = googleCampaigns.filter((c: any) => c.conversions > 0 && gCPA > 0 && c.cpa > gCPA * 2);
+  if (gHighCpaC.length > 0) {
+    googleAnomalyAlerts.push({
+      severity: "warn",
+      title: `CPA spike: ${gHighCpaC.length} campaign${gHighCpaC.length > 1 ? "s" : ""} above 2× blended CPA`,
+      message: `${gHighCpaC.map((c: any) => c.name).join(", ")} — significantly above blended CPA of ${fmtMYR(gCPA)}.`,
+      action: "Review bidding strategy, audience targeting, and landing page quality.",
+    });
+  }
+  if (gSpend > 200 && gConversions === 0) {
+    googleAnomalyAlerts.push({
+      severity: "critical",
+      title: "No Google conversions tracked",
+      message: `${fmtMYR(gSpend)} spent across all Google campaigns with zero conversions recorded.`,
+      action: "Verify Google Tag Manager and conversion action configurations immediately.",
+    });
+  }
+
+  const activeCampaignsG = googleCampaigns.filter((c: any) =>
+    c.status === "Active" || String(c.status || "").toUpperCase() === "ENABLED"
+  );
+  const withConversionsG = activeCampaignsG.filter((c: any) => c.conversions > 0);
+  const withoutConversionsG = activeCampaignsG.filter((c: any) => c.conversions === 0 && c.spend > 0);
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-6 pb-10">
@@ -281,6 +366,18 @@ export default function GoogleAdsPage() {
                 <p className={`text-lg font-bold ${trends[t.key] > 0 ? "text-green-600" : trends[t.key] < 0 ? "text-red-500" : "text-foreground"}`}>
                   {trends[t.key] > 0 ? "+" : ""}{trends[t.key].toFixed(1)}%
                 </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {googleAnomalyAlerts.length > 0 && (
+          <div className="flex flex-col gap-2">
+            {googleAnomalyAlerts.map((alert, i) => (
+              <div key={i} className={`rounded-xl border px-4 py-3 ${alert.severity === "critical" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}>
+                <p className={`text-sm font-bold ${alert.severity === "critical" ? "text-red-700" : "text-amber-800"}`}>{alert.title}</p>
+                <p className={`text-xs mt-0.5 ${alert.severity === "critical" ? "text-red-600" : "text-amber-700"}`}>{alert.message}</p>
+                {alert.action && <p className={`text-xs mt-1 font-semibold ${alert.severity === "critical" ? "text-red-700" : "text-amber-800"}`}>→ {alert.action}</p>}
               </div>
             ))}
           </div>
@@ -415,7 +512,15 @@ export default function GoogleAdsPage() {
         <SectionCard title="Campaign Performance">
           <DetailTable
             headers={[
-              { label: "Campaign", key: "name" },
+              { label: "Campaign", key: "name", render: (v, row) => {
+                const label = classifyGCampaign(googleCampaigns, row);
+                return (
+                  <div>
+                    <p className="font-semibold text-foreground">{v}</p>
+                    {label && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 inline-block ${label.color}`}>{label.text}</span>}
+                  </div>
+                );
+              }},
               { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
               { label: "Daily Budget", key: "daily_budget", align: "right", render: (v) => fmtMaybeMYR(v) },
               { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
@@ -497,32 +602,99 @@ export default function GoogleAdsPage() {
 
         {searchWasteRows.length > 0 && (
           <SectionCard title="Wasted Search Terms" description="Searches with zero conversions and enough spend to justify negative-keyword review.">
-            <DetailTable
-              headers={[
-                { label: "Search Term", key: "search_term" },
-                { label: "Campaign", key: "campaign_name" },
-                { label: "Ad Group", key: "ad_group_name" },
-                { label: "Cost", key: "cost", align: "right", render: (v) => <span className="font-semibold text-red-500">{fmtMYR(v)}</span> },
-                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
-              ]}
-              rows={searchWasteRows}
-            />
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border/60">
+                  {["Search Term", "Campaign", "Ad Group", "Cost", "Clicks", "Actions"].map((h, i) => (
+                    <th key={i} className={`px-4 py-3 font-semibold text-text-muted uppercase tracking-wide bg-surface-hover ${i >= 3 ? "text-right" : "text-left"}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {searchWasteRows.filter((row: any) => !ignoredQueries.has(row.search_term)).map((row: any, i: number) => {
+                  const campaignId = row.campaign_id || findCampaignId(row.campaign_name);
+                  const actionKey = `${row.search_term}__${campaignId}`;
+                  const actionState = queryActions[actionKey];
+                  return (
+                    <tr key={i} className="border-b border-border/40 hover:bg-surface-hover/50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-foreground">{row.search_term}</td>
+                      <td className="px-4 py-3 text-text-muted">{row.campaign_name || "—"}</td>
+                      <td className="px-4 py-3 text-text-muted">{row.ad_group_name || "—"}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-red-500">{fmtMYR(row.cost)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums">{fmt(row.clicks)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {actionState === "applied" ? (
+                            <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded">Added</span>
+                          ) : actionState === "error" ? (
+                            <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded">Failed</span>
+                          ) : (
+                            <button
+                              disabled={actionState === "applying"}
+                              onClick={() => applyNegativeKeyword(row.search_term, campaignId)}
+                              className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors"
+                            >
+                              {actionState === "applying" ? "Adding…" : "+ Negative"}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => ignoreQuery(row.search_term)}
+                            className="text-[10px] font-bold px-2 py-0.5 rounded bg-surface-hover text-text-muted hover:bg-border/40 transition-colors"
+                          >
+                            Ignore 30d
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </SectionCard>
         )}
 
         {negativeSuggestionRows.length > 0 && (
           <SectionCard title="Negative Keyword Candidates" description="Pattern-based negatives detected from wasted search-term evidence.">
-            <DetailTable
-              headers={[
-                { label: "Negative Keyword", key: "negative_keyword" },
-                { label: "Match", key: "match_type", render: (v) => fmtEnum(v) },
-                { label: "Example Query", key: "example_query" },
-                { label: "Campaign", key: "campaign_name" },
-                { label: "Wasted Spend", key: "wasted_spend", align: "right", render: (v) => fmtMYR(v) },
-              ]}
-              rows={negativeSuggestionRows}
-            />
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border/60">
+                  {["Negative Keyword", "Match", "Example Query", "Campaign", "Wasted Spend", "Action"].map((h, i) => (
+                    <th key={i} className={`px-4 py-3 font-semibold text-text-muted uppercase tracking-wide bg-surface-hover ${i >= 4 ? "text-right" : "text-left"}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {negativeSuggestionRows.map((row: any, i: number) => {
+                  const campaignId = row.campaign_id || findCampaignId(row.campaign_name);
+                  const actionKey = `${row.negative_keyword}__${campaignId}`;
+                  const actionState = queryActions[actionKey];
+                  return (
+                    <tr key={i} className="border-b border-border/40 hover:bg-surface-hover/50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-foreground">{row.negative_keyword}</td>
+                      <td className="px-4 py-3 text-text-muted">{fmtEnum(row.match_type)}</td>
+                      <td className="px-4 py-3 text-text-muted italic">{row.example_query || "—"}</td>
+                      <td className="px-4 py-3 text-text-muted">{row.campaign_name || "—"}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-red-500">{fmtMYR(row.wasted_spend)}</td>
+                      <td className="px-4 py-3 text-right">
+                        {actionState === "applied" ? (
+                          <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded">Added</span>
+                        ) : actionState === "error" ? (
+                          <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded">Failed</span>
+                        ) : (
+                          <button
+                            disabled={actionState === "applying"}
+                            onClick={() => applyNegativeKeyword(row.negative_keyword, campaignId, row.match_type || "broad")}
+                            className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors"
+                          >
+                            {actionState === "applying" ? "Adding…" : "+ Add Negative"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </SectionCard>
         )}
 
@@ -677,6 +849,40 @@ export default function GoogleAdsPage() {
               </SectionCard>
             )}
           </div>
+        )}
+
+        {/* ── Conversion Tracking Health ── */}
+        {activeCampaignsG.length > 0 && (
+          <SectionCard title="Conversion Tracking Health" description="Which active campaigns are recording conversions — a broken pixel is often the real problem.">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Active Campaigns</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{activeCampaignsG.length}</p>
+              </div>
+              <div className={`rounded-xl border p-4 ${withConversionsG.length > 0 ? "border-green-200 bg-green-50" : "border-border/60 bg-surface-hover"}`}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Tracking Conversions</p>
+                <p className={`mt-1 text-xl font-bold ${withConversionsG.length > 0 ? "text-green-700" : "text-text-muted"}`}>{withConversionsG.length}</p>
+              </div>
+              <div className={`rounded-xl border p-4 ${withoutConversionsG.length > 0 ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50"}`}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">No Conversions Tracked</p>
+                <p className={`mt-1 text-xl font-bold ${withoutConversionsG.length > 0 ? "text-amber-600" : "text-green-700"}`}>{withoutConversionsG.length}</p>
+              </div>
+            </div>
+            {withoutConversionsG.length > 0 && (
+              <div className="border-t border-border/60">
+                <DetailTable
+                  headers={[
+                    { label: "Campaign", key: "name" },
+                    { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
+                    { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                    { label: "Conversions", key: "conversions", align: "right", render: (v) => <span className="text-amber-600 font-bold">{v}</span> },
+                  ]}
+                  rows={withoutConversionsG}
+                />
+              </div>
+            )}
+          </SectionCard>
         )}
 
         {/* ── Recommendations ── */}

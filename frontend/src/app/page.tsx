@@ -1,7 +1,7 @@
 "use client";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { UnifiedMetricsCard } from "@/components/ui/UnifiedMetricsCard";
+import { UnifiedMetricsCard, AnomalyAlert } from "@/components/ui/UnifiedMetricsCard";
 import { DataTable } from "@/components/ui/DataTable";
 import { DatePicker } from "@/components/ui/DatePicker";
 import React, { useEffect, useState } from "react";
@@ -129,6 +129,48 @@ export default function Home() {
   })();
   const cpaLabel = platformFilter === "All" ? "Blended CPA" : `${platformFilter} CPA`;
 
+  // Compute blended ROAS from campaign conversion values if available
+  const totalConversionValue = filteredCampaigns.reduce((sum, c) => sum + (c.conversion_value ?? 0), 0);
+  const totalSpendForROAS = filteredCampaigns.reduce((sum, c) => sum + (c.spend || 0), 0);
+  const computedROAS = totalConversionValue > 0 && totalSpendForROAS > 0
+    ? totalConversionValue / totalSpendForROAS
+    : (dynamicMetrics.blendedROAS ?? 0);
+  const metricsWithROAS = { ...dynamicMetrics, blendedROAS: computedROAS };
+
+  // Anomaly detection
+  const anomalyAlerts: AnomalyAlert[] = [];
+  const activeCampaigns = filteredCampaigns.filter((c) => c.status === "Active");
+  const zeroConvWaste = activeCampaigns.filter((c) => c.spend > 50 && c.conversions === 0);
+  if (zeroConvWaste.length > 0) {
+    const wastedSpend = zeroConvWaste.reduce((sum, c) => sum + c.spend, 0);
+    anomalyAlerts.push({
+      severity: wastedSpend > 500 ? "critical" : "warn",
+      title: `${zeroConvWaste.length} campaign${zeroConvWaste.length > 1 ? "s" : ""} spending with zero conversions`,
+      message: `RM ${wastedSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })} spent with no tracked results. Check conversion tracking or pause underperformers.`,
+      action: "Review tracking setup or add these campaigns to your negative keyword list.",
+    });
+  }
+  const avgCpa = dynamicMetrics.blendedCPA;
+  const highCpaCampaigns = activeCampaigns.filter((c) => c.conversions > 0 && avgCpa > 0 && c.cpa > avgCpa * 2);
+  if (highCpaCampaigns.length > 0) {
+    anomalyAlerts.push({
+      severity: "warn",
+      title: `CPA spike: ${highCpaCampaigns.length} campaign${highCpaCampaigns.length > 1 ? "s" : ""} above 2× average`,
+      message: `${highCpaCampaigns.map((c) => c.name).join(", ")} — CPA is significantly above blended average (RM ${avgCpa.toFixed(0)}).`,
+      action: "Review bids, audience targeting, and landing page quality.",
+    });
+  }
+  const totalConversions = filteredCampaigns.reduce((sum, c) => sum + c.conversions, 0);
+  const totalSpend = filteredCampaigns.reduce((sum, c) => sum + c.spend, 0);
+  if (totalSpend > 200 && totalConversions === 0) {
+    anomalyAlerts.push({
+      severity: "critical",
+      title: "No conversions tracked across all campaigns",
+      message: `RM ${totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })} spent with zero recorded conversions. Conversion tracking may be broken.`,
+      action: "Check Google Tag Manager, Meta pixel, and conversion action configurations immediately.",
+    });
+  }
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-6 pb-10">
@@ -186,7 +228,7 @@ export default function Home() {
           </div>
         )}
 
-        <UnifiedMetricsCard metrics={dynamicMetrics} cpaLabel={cpaLabel} />
+        <UnifiedMetricsCard metrics={metricsWithROAS} cpaLabel={cpaLabel} anomalyAlerts={anomalyAlerts} />
 
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between mb-1">

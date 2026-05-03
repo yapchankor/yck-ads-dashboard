@@ -11,6 +11,8 @@ export type Campaign = {
   roas: number;
   impressions?: number;
   clicks?: number;
+  conversion_value?: number;
+  daily_budget?: number;
 };
 
 export type RecommendationStatus = "Pending" | "Tracking" | "Completed" | "Dismissed";

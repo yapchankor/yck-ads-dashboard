@@ -1,6 +1,44 @@
 import React from "react";
 import { Campaign } from "@/lib/types";
 
+type InsightLabel = {
+  text: string;
+  color: "red" | "amber" | "green" | "blue";
+};
+
+function classifyCampaign(allCampaigns: Campaign[], row: Campaign): InsightLabel | null {
+  if (row.status !== "Active") return null;
+
+  const activeCampaignsWithConversions = allCampaigns.filter(
+    (c) => c.status === "Active" && c.conversions > 0 && c.spend > 0
+  );
+  const avgCpa =
+    activeCampaignsWithConversions.length > 0
+      ? activeCampaignsWithConversions.reduce((sum, c) => sum + c.cpa, 0) / activeCampaignsWithConversions.length
+      : 0;
+
+  if (row.spend > 20 && row.conversions === 0) {
+    return { text: "Spending, no conversions", color: "red" };
+  }
+  if (avgCpa > 0 && row.conversions >= 2 && row.cpa <= avgCpa * 0.75) {
+    return { text: "Top performer", color: "green" };
+  }
+  if (avgCpa > 0 && row.cpa > avgCpa * 1.5) {
+    return { text: "High CPA", color: "amber" };
+  }
+  if (row.conversions > 0 && row.spend > 0 && row.roas > 3) {
+    return { text: "Strong ROAS", color: "blue" };
+  }
+  return null;
+}
+
+const labelColors: Record<InsightLabel["color"], string> = {
+  red: "bg-red-100 text-red-700",
+  amber: "bg-amber-100 text-amber-700",
+  green: "bg-green-100 text-green-700",
+  blue: "bg-blue-100 text-blue-700",
+};
+
 const GoogleIcon = () => (
   <svg viewBox="0 0 24 24" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -17,6 +55,10 @@ const MetaIcon = () => (
 );
 
 export function DataTable({ data }: { data: Campaign[] }) {
+  const classifiedData = data.map((row) => ({
+    row,
+    label: classifyCampaign(data, row),
+  }));
   return (
     <div className="w-full bg-surface shadow-soft rounded-2xl border border-border/40 overflow-hidden">
       <div className="overflow-hidden">
@@ -38,7 +80,7 @@ export function DataTable({ data }: { data: Campaign[] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/40">
-            {data.map((row) => (
+            {classifiedData.map(({ row, label }) => (
               <tr key={row.id} className="hover:bg-surface-hover/50 transition-colors">
                 <td className="px-4 py-4">
                   <div className="flex min-w-0 items-center gap-3">
@@ -47,7 +89,14 @@ export function DataTable({ data }: { data: Campaign[] }) {
                     </div>
                     <div className="min-w-0">
                       <p className="truncate font-semibold text-foreground" title={row.name}>{row.name}</p>
-                      <p className="text-xs text-text-muted mt-0.5">{row.platform} Ads</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-xs text-text-muted">{row.platform} Ads</p>
+                        {label && (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${labelColors[label.color]}`}>
+                            {label.text}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </td>
