@@ -39,6 +39,8 @@ export type Recommendation = {
   normalized_key?: string;
   current_bid?: number;
   suggested_bid?: number;
+  current_budget?: number;
+  budget_basis?: string;
   keyword?: string;
   execution_status?: string;
   quality_label?: RecommendationQualityLabel;

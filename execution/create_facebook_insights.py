@@ -229,6 +229,8 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 'priority': 'low',
                 'campaign_name': pacing['campaign_name'],
                 'campaign_id': pacing.get('campaign_id'),
+                'current_budget': pacing.get('budget'),
+                'budget_basis': pacing.get('budget_type'),
                 'impact_data': impact_data,
                 'automation': automation,
             }
@@ -296,18 +298,25 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 scale_factor=1.25
             )
             automation = get_automation_metadata('budget_scaling', platform='facebook')
+            current_budget = candidate.get('current_budget') or candidate.get('daily_budget') or 0
+            suggested_budget = round(current_budget * 1.25, 2) if current_budget else None
 
             rec = {
                 'type': 'budget_scaling',
                 'action': f"Scale budget for {candidate['name']}",
                 'reason': f"CPA {currency} {candidate['cpa']:,.2f} is {candidate['vs_avg_cpa']}% below account average. "
                          f"Conversion rate {candidate['conv_rate']}% with {candidate['conversions']} conversions.",
-                'expected_impact': f"+{impact_data['additional_conversions_monthly']:.1f} conversions/month, +{currency} {impact_data.get('additional_revenue_monthly', 0):,.2f} revenue ({impact_data['confidence_pct']}% confidence)",
+                'expected_impact': f"+{impact_data['additional_conversions_monthly']:.1f} conversions/month ({impact_data['confidence_pct']}% confidence)",
                 'priority': 'high',
                 'campaign_name': candidate['name'],
                 'campaign_id': candidate.get('campaign_id'),
                 'adset_id': candidate.get('adset_id'),
-                'suggested_budget': round(candidate.get('spend', 0) * 1.25, 2), # Suggest 25% increase
+                'spend': candidate.get('spend'),
+                'clicks': candidate.get('clicks'),
+                'conversions': candidate.get('conversions'),
+                'current_budget': current_budget,
+                'budget_basis': candidate.get('budget_basis'),
+                'suggested_budget': suggested_budget,
                 'impact_data': impact_data,
                 'automation': automation,
             }

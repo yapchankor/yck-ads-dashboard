@@ -129,6 +129,8 @@ export function RecommendationCard({
           adset_id: rec.adset_id,
           keyword: rec.keyword,
           suggested_bid: rec.suggested_bid,
+          current_budget: rec.current_budget,
+          budget_basis: rec.budget_basis,
           manual: isManual,
           status: statusOverride,
           baseline_metrics: {

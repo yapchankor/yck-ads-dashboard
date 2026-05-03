@@ -364,42 +364,171 @@ def recommendation_fallback_key(item):
         return f"{platform}|{action_type}|keyword:{keyword}"
     return ""
 
-REVENUE_RECOMMENDATION_TYPES = {"roas_scaling", "roas_review"}
+ACTION_CONTRACTS = {
+    "add_negative_keyword": {
+        "automation": "auto",
+        "risk": "low",
+        "category": "waste",
+        "manual_reason": "A campaign ID and keyword are required before this can be applied automatically.",
+    },
+    "keyword_action": {
+        "automation": "auto",
+        "risk": "low",
+        "category": "waste",
+        "manual_reason": "Keyword pause actions require a live Google keyword resource ID.",
+    },
+    "bid_adjustment": {
+        "automation": "auto",
+        "risk": "low",
+        "category": "bid",
+        "manual_reason": "Bid changes require a live Google keyword resource ID and numeric target bid.",
+    },
+    "budget_adjustment": {
+        "automation": "auto",
+        "risk": "low",
+        "category": "budget",
+        "manual_reason": "Budget changes require a verified campaign or ad set ID and numeric target budget.",
+    },
+    "budget_scaling": {
+        "automation": "auto",
+        "risk": "low",
+        "category": "budget",
+        "manual_reason": "Budget scaling requires the current daily budget and a numeric target budget.",
+    },
+    "audience_exclusion": {
+        "automation": "manual",
+        "risk": "high",
+        "category": "waste",
+        "manual_reason": "Audience exclusions can narrow delivery and must be reviewed manually.",
+    },
+    "placement_exclusion": {
+        "automation": "manual",
+        "risk": "high",
+        "category": "waste",
+        "manual_reason": "Placement exclusions can reduce delivery and must be reviewed manually.",
+    },
+    "geo_exclusion": {
+        "automation": "manual",
+        "risk": "high",
+        "category": "waste",
+        "manual_reason": "Location exclusions can reduce delivery and must be reviewed manually.",
+    },
+    "campaign_review": {
+        "automation": "manual",
+        "risk": "high",
+        "category": "waste",
+        "manual_reason": "Campaign pausing or major campaign changes require manual review.",
+    },
+    "geo_scaling": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "scale",
+        "manual_reason": "Geo scaling is not automated yet; review location performance before changing bids or budgets.",
+    },
+    "schedule_bid_adjustment": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "schedule",
+        "manual_reason": "Schedule bid adjustments are not automated yet.",
+    },
+    "geo_bid_adjustment": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "geo",
+        "manual_reason": "Geo bid adjustments are not automated yet.",
+    },
+    "creative_refresh": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "creative",
+        "manual_reason": "Creative refresh requires new creative or copy review.",
+    },
+    "schedule_adjustment": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "schedule",
+        "manual_reason": "Schedule changes require manual confirmation before changing delivery.",
+    },
+    "day_schedule": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "schedule",
+        "manual_reason": "Day-of-week schedule changes require manual confirmation.",
+    },
+    "audience_fatigue": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "audience",
+        "manual_reason": "Audience expansion requires targeting strategy review.",
+    },
+    "objective_mismatch": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "setup",
+        "manual_reason": "Campaign objectives cannot be changed automatically after creation.",
+    },
+    "creative_test": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "creative",
+        "manual_reason": "A/B tests require new creative or copy setup.",
+    },
+    "landing_page": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "website",
+        "manual_reason": "Landing page changes require website access and content review.",
+    },
+    "quality_improvement": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "quality",
+        "manual_reason": "Quality Score improvements require landing page, ad relevance, or account structure work.",
+    },
+    "ad_copy": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "creative",
+        "manual_reason": "Ad copy changes require copy review before publishing.",
+    },
+    "roas_scaling": {
+        "automation": "suppress_without_conversion_value",
+        "risk": "high",
+        "category": "revenue",
+        "manual_reason": "ROAS recommendations require verified conversion value tracking.",
+    },
+    "roas_review": {
+        "automation": "suppress_without_conversion_value",
+        "risk": "high",
+        "category": "revenue",
+        "manual_reason": "ROAS recommendations require verified conversion value tracking.",
+    },
+}
+DEFAULT_ACTION_CONTRACT = {
+    "automation": "manual",
+    "risk": "low",
+    "category": "unknown",
+    "manual_reason": "No safe automated action is available for this recommendation.",
+}
+
+REVENUE_RECOMMENDATION_TYPES = {
+    action_type for action_type, contract in ACTION_CONTRACTS.items()
+    if contract.get("category") == "revenue"
+}
 WASTE_ACTION_TYPES = {
-    "add_negative_keyword",
-    "keyword_action",
-    "audience_exclusion",
-    "placement_exclusion",
-    "geo_exclusion",
-    "campaign_review",
+    action_type for action_type, contract in ACTION_CONTRACTS.items()
+    if contract.get("category") == "waste"
 }
-SCALE_ACTION_TYPES = {"budget_scaling", "geo_scaling"}
+SCALE_ACTION_TYPES = {
+    action_type for action_type, contract in ACTION_CONTRACTS.items()
+    if contract.get("category") in {"budget", "scale"}
+}
 CREATIVE_REVIEW_ACTION_TYPES = {
-    "creative_refresh",
-    "schedule_adjustment",
-    "day_schedule",
-    "audience_fatigue",
-    "objective_mismatch",
-    "creative_test",
-    "landing_page",
-    "quality_improvement",
-    "ad_copy",
+    action_type for action_type, contract in ACTION_CONTRACTS.items()
+    if contract.get("category") in {"creative", "schedule", "audience", "setup", "website", "quality", "geo"}
 }
-AUTOMATABLE_ACTION_TYPES = {
-    "add_negative_keyword",
-    "keyword_action",
-    "bid_adjustment",
-    "budget_adjustment",
-    "budget_scaling",
-}
-HIGH_RISK_REVIEW_ACTION_TYPES = {
-    "budget_scaling",
-    "geo_scaling",
-    "audience_exclusion",
-    "placement_exclusion",
-    "geo_exclusion",
-    "campaign_review",
-}
+def action_contract(action_type_norm):
+    return ACTION_CONTRACTS.get(normalize_match_value(action_type_norm), DEFAULT_ACTION_CONTRACT)
 
 def normalized_recommendation_key(item):
     return recommendation_match_key(item) or recommendation_fallback_key(item)
@@ -421,8 +550,29 @@ def has_required_automation_fields(action_type_norm, rec):
             and safe_number(rec.get("suggested_bid"), None) is not None
         )
 
-    if action_type_norm in {"budget_adjustment", "budget_scaling"}:
-        return bool((rec.get("campaign_id") or rec.get("adset_id")) and safe_number(rec.get("suggested_bid"), None) is not None)
+    if action_type_norm == "budget_adjustment":
+        suggested_budget = safe_number(rec.get("suggested_bid"), None)
+        current_budget = safe_number(
+            first_present(rec.get("current_budget"), rec.get("daily_budget"), rec.get("budget")),
+            None,
+        )
+        if suggested_budget is None:
+            return False
+        if current_budget is not None and current_budget > 0 and suggested_budget > current_budget * 1.25 + 0.01:
+            return False
+        return bool(rec.get("campaign_id") or rec.get("adset_id"))
+
+    if action_type_norm == "budget_scaling":
+        current_budget = safe_number(
+            first_present(rec.get("current_budget"), rec.get("daily_budget"), rec.get("budget")),
+            None,
+        )
+        suggested_budget = safe_number(rec.get("suggested_bid"), None)
+        if current_budget is None or current_budget <= 0 or suggested_budget is None:
+            return False
+        if suggested_budget > current_budget * 1.25 + 0.01:
+            return False
+        return bool(rec.get("campaign_id") or rec.get("adset_id"))
 
     return False
 
@@ -556,10 +706,13 @@ def needs_high_risk_review(action_type, rec, conversions=None):
         return False
     if action_type_norm in {"add_negative_keyword", "keyword_action"}:
         return conversions not in (None, 0)
-    return action_type_norm in HIGH_RISK_REVIEW_ACTION_TYPES
+    return action_contract(action_type_norm).get("risk") == "high"
 
 def downgrade_label(action_type, rec, conversions=None):
     return "Needs review" if needs_high_risk_review(action_type, rec, conversions) else "Manual only"
+
+def contract_manual_reason(action_type, fallback=None):
+    return action_contract(action_type).get("manual_reason") or fallback or DEFAULT_ACTION_CONTRACT["manual_reason"]
 
 def strip_unsupported_revenue_copy(text):
     if not text:
@@ -654,6 +807,7 @@ def apply_recommendation_guardrails(data):
         rec = dict(rec)
         action_type = rec.get("action_type") or rec.get("type") or "review"
         action_type_norm = normalize_match_value(action_type)
+        contract = action_contract(action_type_norm)
         platform_cpa = platform_average_cpa(data, rec.get("platform") or "Google")
         reasons = []
         unsupported_metric = False
@@ -669,9 +823,10 @@ def apply_recommendation_guardrails(data):
         confidence_score = int(max(0, min(100, safe_number(evidence["confidence_inputs"].get("impact_confidence_pct"), 0))))
         automation = rec.get("automation") or {}
         has_required_ids = has_required_automation_fields(action_type_norm, rec)
+        contract_allows_automation = contract.get("automation") == "auto"
         automation_allowed = bool(
-            automation.get("is_automatable", action_type_norm in AUTOMATABLE_ACTION_TYPES)
-            and action_type_norm in AUTOMATABLE_ACTION_TYPES
+            contract_allows_automation
+            and automation.get("is_automatable", contract_allows_automation)
             and has_required_ids
         )
         guardrail_status = "eligible"
@@ -754,7 +909,7 @@ def apply_recommendation_guardrails(data):
                 automation_allowed = False
                 reasons.append("Confidence is below the auto-apply threshold.")
 
-        if action_type_norm in SCALE_ACTION_TYPES and guardrail_status != "suppressed":
+        if action_type_norm in SCALE_ACTION_TYPES and action_type_norm != "budget_adjustment" and guardrail_status != "suppressed":
             if conversions is None or conversions < 2 or spend is None or spend < 10:
                 guardrail_status = "manual_only"
                 quality_label = downgrade_label(action_type_norm, rec, conversions)
@@ -762,11 +917,17 @@ def apply_recommendation_guardrails(data):
                 reasons.append("Not enough conversion volume for automatic scaling.")
 
         if action_type_norm == "budget_adjustment" and guardrail_status != "suppressed":
+            current_budget = safe_number(first_present(rec.get("current_budget"), rec.get("daily_budget"), rec.get("budget")), None)
             if suggested_bid is None:
                 guardrail_status = "manual_only"
                 quality_label = "Manual only"
                 automation_allowed = False
                 reasons.append("No numeric budget target is available for automatic apply.")
+            elif current_budget is not None and current_budget > 0 and suggested_bid > current_budget * 1.25 + 0.01:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Budget increases above 25% require manual confirmation.")
             elif confidence_score < 70:
                 guardrail_status = "manual_only"
                 quality_label = "Manual only"
@@ -774,9 +935,25 @@ def apply_recommendation_guardrails(data):
                 reasons.append("Budget change confidence is below the auto-apply threshold.")
 
         if action_type_norm == "budget_scaling" and guardrail_status != "suppressed":
+            current_budget = safe_number(first_present(rec.get("current_budget"), rec.get("daily_budget"), rec.get("budget")), None)
+            if current_budget is None or current_budget <= 0:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Current daily budget is unavailable, so automatic scaling is disabled.")
+            elif suggested_bid is None:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("No numeric budget target is available for automatic apply.")
+            elif suggested_bid > current_budget * 1.25 + 0.01:
+                guardrail_status = "manual_only"
+                quality_label = "Manual only"
+                automation_allowed = False
+                reasons.append("Budget increases above 25% require manual confirmation.")
             if conversions is None or conversions < 5:
                 guardrail_status = "manual_only"
-                quality_label = "Needs review"
+                quality_label = "Manual only"
                 automation_allowed = False
                 reasons.append("Budget scaling requires at least 5 conversions.")
 
@@ -784,12 +961,12 @@ def apply_recommendation_guardrails(data):
             guardrail_status = "manual_only"
             quality_label = "Manual only"
             automation_allowed = False
-            reasons.append("This recommendation requires human review or creative/platform setup.")
+            reasons.append(contract_manual_reason(action_type_norm))
 
         if not automation_allowed and guardrail_status == "eligible":
             guardrail_status = "manual_only"
-            quality_label = "Manual only"
-            reasons.append("No safe automated action is available for this recommendation.")
+            quality_label = downgrade_label(action_type_norm, rec, conversions)
+            reasons.append(contract_manual_reason(action_type_norm))
 
         if guardrail_status == "eligible" and automation_allowed:
             if confidence_score >= 70:
@@ -799,6 +976,10 @@ def apply_recommendation_guardrails(data):
                 quality_label = "Manual only"
                 automation_allowed = False
                 reasons.append("Confidence is below the auto-apply threshold.")
+
+        if guardrail_status == "manual_only":
+            automation_allowed = False
+            quality_label = downgrade_label(action_type_norm, rec, conversions)
 
         rec["normalized_key"] = normalized_recommendation_key(rec)
         rec["quality_label"] = quality_label
@@ -1142,6 +1323,8 @@ class ApplyRequest(BaseModel):
     campaign_id: Any = None
     keyword: Any = None
     suggested_bid: Optional[float] = None
+    current_budget: Optional[float] = None
+    budget_basis: Any = None
     adset_id: Any = None
     normalized_key: Any = None
     quality_label: Any = None
@@ -1395,6 +1578,7 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     request.campaign_id = request_text(request.campaign_id)
     request.keyword = request_text(request.keyword)
     request.adset_id = request_text(request.adset_id)
+    request.budget_basis = request_text(request.budget_basis)
     request.normalized_key = request_text(request.normalized_key)
     request.quality_label = request_text(request.quality_label)
     request.guardrail_status = request_text(request.guardrail_status)
@@ -1426,6 +1610,22 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "target_id": request.target_id or request.adset_id,
         "campaign_id": request.campaign_id,
     })
+    request_contract_record = {
+        "action_type": request.action_type,
+        "suggested_action": request.suggested_action,
+        "suggested": request.suggested_action,
+        "target_id": request.target_id,
+        "campaign_id": request.campaign_id,
+        "adset_id": request.adset_id,
+        "keyword": request.keyword,
+        "suggested_bid": request.suggested_bid,
+        "current_budget": request.current_budget,
+        "budget_basis": request.budget_basis,
+    }
+    auto_contract_ok = (
+        action_contract(action_type_norm).get("automation") == "auto"
+        and has_required_automation_fields(action_type_norm, request_contract_record)
+    )
 
     def matches_request(record: dict):
         return (
@@ -1460,6 +1660,9 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     execution_result = None
     if is_dismissal or request.manual:
         pass
+    elif not auto_contract_ok:
+        execution_status = f"Manual: {contract_manual_reason(action_type_norm)}"
+        response_status = "manual_required"
     elif normalize_match_value(request.platform) == "google":
         try:
             import google_ads_executor
@@ -1542,6 +1745,8 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "campaign_id": request.campaign_id,
         "adset_id": request.adset_id,
         "keyword": request.keyword,
+        "current_budget": request.current_budget,
+        "budget_basis": request.budget_basis,
         "suggested_bid": request.suggested_bid,
         "execution_status": execution_status,
         "status": "Dismissed" if is_dismissal else ("Tracking" if response_status != "error" else "Failed"),
@@ -1892,6 +2097,11 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
                             'campaign_id': rec.get('campaign_id'),
                             'adset_id': rec.get('adset_id'),
                             'suggested_bid': rec.get('suggested_budget') or rec.get('impact_data', {}).get('suggested_budget'),
+                            'current_budget': rec.get('current_budget') or rec.get('daily_budget') or rec.get('budget'),
+                            'budget_basis': rec.get('budget_basis'),
+                            'spend': rec.get('spend'),
+                            'clicks': rec.get('clicks'),
+                            'conversions': rec.get('conversions'),
                             'impact_data': rec.get('impact_data') or {},
                             'automation': rec.get('automation') or {},
                         }

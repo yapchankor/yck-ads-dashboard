@@ -515,9 +515,12 @@ def analyze_top_performers(campaigns, ad_sets):
 
     # Check campaigns
     for camp in campaigns:
+        if camp.get('status') not in {'ACTIVE', 'ENABLED'}:
+            continue
         spend = camp.get('spend', 0)
         conversions = camp.get('conversions', 0)
         clicks = camp.get('clicks', 0)
+        daily_budget = camp.get('daily_budget', 0)
 
         if spend < 10 or clicks < 10:
             continue
@@ -531,7 +534,11 @@ def analyze_top_performers(campaigns, ad_sets):
                 'campaign_id': camp.get('campaign_id'),
                 'level': 'campaign',
                 'spend': round(spend, 2),
+                'daily_budget': daily_budget,
+                'current_budget': daily_budget,
+                'budget_basis': 'daily' if daily_budget else None,
                 'conversions': conversions,
+                'clicks': clicks,
                 'cpa': round(cpa, 2),
                 'conv_rate': round(conv_rate, 2),
                 'vs_avg_cpa': round((1 - cpa / avg_cpa) * 100, 1) if avg_cpa > 0 else 0,
@@ -548,9 +555,12 @@ def analyze_top_performers(campaigns, ad_sets):
 
     # Check ad sets
     for adset in ad_sets:
+        if adset.get('status') not in {'ACTIVE', 'ENABLED'}:
+            continue
         spend = adset.get('spend', 0)
         conversions = adset.get('conversions', 0)
         clicks = adset.get('clicks', 0)
+        daily_budget = adset.get('daily_budget', 0)
 
         if spend < 10 or clicks < 5:
             continue
@@ -565,7 +575,11 @@ def analyze_top_performers(campaigns, ad_sets):
                 'level': 'ad_set',
                 'campaign': adset.get('campaign_name', ''),
                 'spend': round(spend, 2),
+                'daily_budget': daily_budget,
+                'current_budget': daily_budget,
+                'budget_basis': 'daily' if daily_budget else None,
                 'conversions': conversions,
+                'clicks': clicks,
                 'cpa': round(cpa, 2),
                 'conv_rate': round(conv_rate, 2),
                 'vs_avg_cpa': round((1 - cpa / avg_cpa) * 100, 1) if avg_cpa > 0 else 0,

@@ -30,6 +30,7 @@ function enrichRecommendation(raw: any) {
   const keyword = raw.keyword || null;
   const currentBid = numberOrNull(raw.current_bid);
   const suggestedBid = numberOrNull(raw.suggested_bid);
+  const currentBudget = numberOrNull(raw.current_budget);
 
   let title = raw.title || raw.action || "Recommendation";
   let suggestedAction = raw.suggested_action || raw.action || raw.title || "Review and Apply";
@@ -87,6 +88,8 @@ function enrichRecommendation(raw: any) {
     normalized_key: raw.normalized_key || null,
     current_bid: currentBid,
     suggested_bid: suggestedBid,
+    current_budget: currentBudget,
+    budget_basis: raw.budget_basis || null,
     quality_label: qualityLabel,
     confidence_score: numberOrNull(raw.confidence_score) ?? null,
     guardrail_status: guardrailStatus,
