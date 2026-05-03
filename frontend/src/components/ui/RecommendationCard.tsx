@@ -28,6 +28,17 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   add_negative_keyword: "Add Negative Keyword",
   budget_adjustment: "Budget Adjustment",
   bid_adjustment: "Bid Adjustment",
+  budget_scaling: "Budget Scaling",
+  creative_test: "Creative Test",
+  objective_mismatch: "Objective Mismatch",
+  audience_fatigue: "Audience Fatigue",
+  creative_refresh: "Creative Refresh",
+  schedule_adjustment: "Schedule Adjustment",
+  day_schedule: "Day Schedule",
+  placement_exclusion: "Placement Exclusion",
+  audience_exclusion: "Audience Exclusion",
+  geo_exclusion: "Geo Exclusion",
+  campaign_review: "Campaign Review",
   a_b_test: "A/B Test",
   keyword_action: "Keyword Action",
   pause: "Pause",
@@ -40,7 +51,7 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
 const QUALITY_STYLES: Record<string, string> = {
   "High confidence": "bg-green-50 text-green-700 border-green-100",
   "Needs review": "bg-amber-50 text-amber-700 border-amber-100",
-  "Manual only": "bg-blue-50 text-blue-700 border-blue-100",
+  "Manual only": "bg-amber-50 text-amber-700 border-amber-100",
   "Insufficient data": "bg-gray-50 text-gray-600 border-gray-100",
 };
 
@@ -62,6 +73,7 @@ export function RecommendationCard({
   const isMeta = rec.platform === "Meta";
   const qualityLabel = rec.quality_label || (rec.isManualOnly ? "Manual only" : "High confidence");
   const canAutoApply = rec.automation_allowed === true && rec.guardrail_status === "eligible" && !rec.isManualOnly;
+  const actionStatusLabel = canAutoApply ? "Auto" : qualityLabel === "Needs review" ? "Needs review" : "Manual";
 
   const impactColor = rec.impact === "High"
     ? "bg-red-100 text-red-600"
@@ -255,7 +267,7 @@ export function RecommendationCard({
             QUALITY_STYLES[qualityLabel] || QUALITY_STYLES["Needs review"]
           )}>
             <AlertCircle className="h-3 w-3" />
-            {qualityLabel}
+            {actionStatusLabel}
             {typeof rec.confidence_score === "number" ? ` - ${Math.round(rec.confidence_score)}%` : ""}
           </span>
         </div>
@@ -351,7 +363,7 @@ export function RecommendationCard({
             <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
             <div className="space-y-1">
               <p className="text-[10px] text-amber-700 leading-snug font-medium">
-                This action must be reviewed manually before it changes the ad account.
+                {qualityLabel === "Needs review" ? "Needs review before changing the ad account." : "Why manual?"}
               </p>
               {(rec.guardrail_reasons || []).slice(0, 2).map((reason) => (
                 <p key={reason} className="text-[10px] text-amber-700/80 leading-snug">{reason}</p>

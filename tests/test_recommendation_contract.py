@@ -93,7 +93,7 @@ class RecommendationContractTests(unittest.TestCase):
         self.assertEqual(recommendations[0]["quality_label"], "Manual only")
         self.assertFalse(recommendations[0]["automation_allowed"])
 
-    def test_budget_scaling_without_current_budget_is_manual_not_needs_review(self):
+    def test_budget_scaling_with_campaign_id_can_auto_apply_without_cached_budget(self):
         recommendations = guarded_recommendations(
             [
                 {
@@ -114,9 +114,9 @@ class RecommendationContractTests(unittest.TestCase):
         )
 
         self.assertEqual(len(recommendations), 1)
-        self.assertEqual(recommendations[0]["guardrail_status"], "manual_only")
-        self.assertEqual(recommendations[0]["quality_label"], "Manual only")
-        self.assertFalse(recommendations[0]["automation_allowed"])
+        self.assertEqual(recommendations[0]["guardrail_status"], "eligible")
+        self.assertEqual(recommendations[0]["quality_label"], "High confidence")
+        self.assertTrue(recommendations[0]["automation_allowed"])
         self.assertNotIn("creative/platform setup", " ".join(recommendations[0]["guardrail_reasons"]).lower())
 
     def test_valid_budget_scaling_uses_verified_current_budget(self):

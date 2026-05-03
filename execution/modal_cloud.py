@@ -563,14 +563,9 @@ def has_required_automation_fields(action_type_norm, rec):
         return bool(rec.get("campaign_id") or rec.get("adset_id"))
 
     if action_type_norm == "budget_scaling":
-        current_budget = safe_number(
-            first_present(rec.get("current_budget"), rec.get("daily_budget"), rec.get("budget")),
-            None,
-        )
+        current_budget = safe_number(first_present(rec.get("current_budget"), rec.get("daily_budget"), rec.get("budget")), None)
         suggested_budget = safe_number(rec.get("suggested_bid"), None)
-        if current_budget is None or current_budget <= 0 or suggested_budget is None:
-            return False
-        if suggested_budget > current_budget * 1.25 + 0.01:
+        if current_budget is not None and current_budget > 0 and suggested_budget is not None and suggested_budget > current_budget * 1.25 + 0.01:
             return False
         return bool(rec.get("campaign_id") or rec.get("adset_id"))
 
@@ -936,17 +931,7 @@ def apply_recommendation_guardrails(data):
 
         if action_type_norm == "budget_scaling" and guardrail_status != "suppressed":
             current_budget = safe_number(first_present(rec.get("current_budget"), rec.get("daily_budget"), rec.get("budget")), None)
-            if current_budget is None or current_budget <= 0:
-                guardrail_status = "manual_only"
-                quality_label = "Manual only"
-                automation_allowed = False
-                reasons.append("Current daily budget is unavailable, so automatic scaling is disabled.")
-            elif suggested_bid is None:
-                guardrail_status = "manual_only"
-                quality_label = "Manual only"
-                automation_allowed = False
-                reasons.append("No numeric budget target is available for automatic apply.")
-            elif suggested_bid > current_budget * 1.25 + 0.01:
+            if current_budget is not None and current_budget > 0 and suggested_bid is not None and suggested_bid > current_budget * 1.25 + 0.01:
                 guardrail_status = "manual_only"
                 quality_label = "Manual only"
                 automation_allowed = False
@@ -1707,6 +1692,22 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
                 execution_result = meta_ads_executor.update_ad_set_budget(request.adset_id, request.suggested_bid)
                 if execution_result.get("status") == "success":
                     execution_status = "Applied: Meta ad set budget updated"
+                    response_status = "applied"
+                else:
+                    execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"
+                    response_status = "error"
+            elif action_type_norm == "budget_scaling" and request.campaign_id:
+                execution_result = meta_ads_executor.scale_campaign_budget(request.campaign_id, scale_factor=1.25)
+                if execution_result.get("status") == "success":
+                    execution_status = "Applied: Meta campaign budget scaled 25%"
+                    response_status = "applied"
+                else:
+                    execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"
+                    response_status = "error"
+            elif action_type_norm == "budget_scaling" and request.adset_id:
+                execution_result = meta_ads_executor.scale_ad_set_budget(request.adset_id, scale_factor=1.25)
+                if execution_result.get("status") == "success":
+                    execution_status = "Applied: Meta ad set budget scaled 25%"
                     response_status = "applied"
                 else:
                     execution_status = f"Meta Error: {execution_result.get('message') or execution_result.get('error') or 'Meta API returned an error'}"

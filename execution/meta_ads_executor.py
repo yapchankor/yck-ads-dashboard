@@ -74,3 +74,83 @@ def update_ad_set_budget(ad_set_id, suggested_budget):
         return {"status": "success", "id": ad_set_id}
     except Exception as ex:
         return meta_error_response(ex)
+
+def scale_campaign_budget(campaign_id, scale_factor=1.25):
+    """Scale a Meta campaign budget by a fixed factor using live budget data."""
+    try:
+        init_facebook_api()
+        campaign = Campaign(campaign_id).api_get(fields=['daily_budget', 'lifetime_budget'])
+        daily_budget = campaign.get('daily_budget')
+        lifetime_budget = campaign.get('lifetime_budget')
+
+        if daily_budget:
+            current_budget = int(daily_budget)
+            new_budget = int(round(current_budget * float(scale_factor)))
+            Campaign(campaign_id).remote_update(params={'daily_budget': new_budget})
+            return {
+                "status": "success",
+                "id": campaign_id,
+                "budget_type": "daily",
+                "previous_budget": current_budget / 100,
+                "new_budget": new_budget / 100,
+            }
+
+        if lifetime_budget:
+            current_budget = int(lifetime_budget)
+            new_budget = int(round(current_budget * float(scale_factor)))
+            Campaign(campaign_id).remote_update(params={'lifetime_budget': new_budget})
+            return {
+                "status": "success",
+                "id": campaign_id,
+                "budget_type": "lifetime",
+                "previous_budget": current_budget / 100,
+                "new_budget": new_budget / 100,
+            }
+
+        return {
+            "status": "error",
+            "code": "MissingBudget",
+            "message": "No campaign budget found. This campaign may use ad set budgets.",
+        }
+    except Exception as ex:
+        return meta_error_response(ex)
+
+def scale_ad_set_budget(ad_set_id, scale_factor=1.25):
+    """Scale a Meta ad set budget by a fixed factor using live budget data."""
+    try:
+        init_facebook_api()
+        adset = AdSet(ad_set_id).api_get(fields=['daily_budget', 'lifetime_budget'])
+        daily_budget = adset.get('daily_budget')
+        lifetime_budget = adset.get('lifetime_budget')
+
+        if daily_budget:
+            current_budget = int(daily_budget)
+            new_budget = int(round(current_budget * float(scale_factor)))
+            AdSet(ad_set_id).remote_update(params={'daily_budget': new_budget})
+            return {
+                "status": "success",
+                "id": ad_set_id,
+                "budget_type": "daily",
+                "previous_budget": current_budget / 100,
+                "new_budget": new_budget / 100,
+            }
+
+        if lifetime_budget:
+            current_budget = int(lifetime_budget)
+            new_budget = int(round(current_budget * float(scale_factor)))
+            AdSet(ad_set_id).remote_update(params={'lifetime_budget': new_budget})
+            return {
+                "status": "success",
+                "id": ad_set_id,
+                "budget_type": "lifetime",
+                "previous_budget": current_budget / 100,
+                "new_budget": new_budget / 100,
+            }
+
+        return {
+            "status": "error",
+            "code": "MissingBudget",
+            "message": "No ad set budget found for scaling.",
+        }
+    except Exception as ex:
+        return meta_error_response(ex)
