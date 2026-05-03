@@ -91,18 +91,101 @@ def analyze_budget_pacing(metrics_data, monthly_budget=None):
     return pacing_analysis
 
 
-def analyze_device_performance(campaigns, keywords):
+def analyze_device_performance(campaigns, keywords, device_rows=None):
     """
     Analyze performance by device type.
-    Note: Device data requires segment fetch - this analyzes what we can from existing data.
+    Uses device-segmented Google Ads rows when available.
 
-    Returns placeholder structure for when device-segmented data is available.
+    Returns:
+        Dict with device-level performance, issues, and recommendations.
     """
-    # This is a placeholder - real device data needs to be fetched with segments
+    if not device_rows:
+        # Backward-compatible placeholder for older cached metrics.
+        return {
+            "note": "Device segmentation is not available in this cached data set",
+            "devices": [],
+            "issues": [],
+            "recommendations": []
+        }
+
+    device_stats = defaultdict(lambda: {
+        "impressions": 0,
+        "clicks": 0,
+        "cost": 0,
+        "conversions": 0,
+        "campaigns": set(),
+    })
+
+    for row in device_rows:
+        if str(row.get("campaign_status", "")).upper() not in {"ENABLED", "ACTIVE"}:
+            continue
+        device = row.get("device") or "UNKNOWN"
+        device_stats[device]["impressions"] += row.get("impressions", 0)
+        device_stats[device]["clicks"] += row.get("clicks", 0)
+        device_stats[device]["cost"] += row.get("cost", 0)
+        device_stats[device]["conversions"] += row.get("conversions", 0)
+        device_stats[device]["campaigns"].add(row.get("campaign_name", ""))
+
+    devices = []
+    for device, stats in device_stats.items():
+        ctr = (stats["clicks"] / stats["impressions"] * 100) if stats["impressions"] else 0
+        conversion_rate = (stats["conversions"] / stats["clicks"] * 100) if stats["clicks"] else 0
+        cpa = (stats["cost"] / stats["conversions"]) if stats["conversions"] else 0
+        devices.append({
+            "device": device,
+            "impressions": stats["impressions"],
+            "clicks": stats["clicks"],
+            "cost": stats["cost"],
+            "conversions": stats["conversions"],
+            "ctr": ctr,
+            "conversion_rate": conversion_rate,
+            "cost_per_conversion": cpa,
+            "campaign_count": len(stats["campaigns"]),
+        })
+
+    devices.sort(key=lambda x: x["cost"], reverse=True)
+    devices_with_conversions = [d for d in devices if d["conversions"] > 0]
+    account_cpa = (
+        sum(d["cost"] for d in devices_with_conversions) /
+        sum(d["conversions"] for d in devices_with_conversions)
+        if sum(d["conversions"] for d in devices_with_conversions) else 0
+    )
+
+    issues = []
+    recommendations = []
+    for device in devices:
+        if device["cost"] >= 20 and device["conversions"] == 0:
+            issues.append({
+                "issue": f"{device['device'].replace('_', ' ').title()} Waste",
+                "severity": "MEDIUM",
+                "description": f"RM {device['cost']:.2f} spent on {device['device'].replace('_', ' ').title()} with zero conversions.",
+                "recommendation": "Review device bid adjustment or landing-page experience before reducing exposure."
+            })
+            recommendations.append({
+                "type": "device_bid_adjustment",
+                "device": device["device"],
+                "suggested_adjustment": "-30%",
+                "reason": f"RM {device['cost']:.2f} spent with 0 conversions on {device['device']}",
+                "expected_impact": f"Reduce wasted device spend by up to RM {device['cost'] * 0.3:.0f}/period"
+            })
+        elif account_cpa and device["conversions"] >= 2 and device["cost_per_conversion"] > account_cpa * 1.5:
+            issues.append({
+                "issue": f"High CPA on {device['device'].replace('_', ' ').title()}",
+                "severity": "MEDIUM",
+                "description": f"CPA is RM {device['cost_per_conversion']:.2f}, above account average RM {account_cpa:.2f}.",
+                "recommendation": "Consider reducing device bids or reviewing mobile/desktop landing-page fit."
+            })
+
     return {
-        "note": "Device segmentation requires additional API fetch with segments.device",
-        "recommendation": "Will be implemented when device-segmented data is added to fetch script",
-        "placeholder_insight": "Mobile typically accounts for 60-70% of chiropractic searches. Consider mobile-first strategy."
+        "devices": devices,
+        "issues": issues,
+        "recommendations": recommendations,
+        "summary": {
+            "best_device": min(devices_with_conversions, key=lambda x: x["cost_per_conversion"])["device"] if devices_with_conversions else None,
+            "best_cpa": min([d["cost_per_conversion"] for d in devices_with_conversions]) if devices_with_conversions else 0,
+            "account_cpa": account_cpa,
+            "total_devices": len(devices),
+        }
     }
 
 

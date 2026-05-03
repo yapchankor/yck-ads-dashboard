@@ -70,7 +70,12 @@ def analyze_search_queries(search_queries, keywords):
                     "match_type": "PHRASE",
                     "reason": f"Found in zero-conversion query: '{query['search_term']}'",
                     "wasted_spend": query['cost'],
-                    "example_query": query['search_term']
+                    "example_query": query['search_term'],
+                    "campaign_id": query.get('campaign_id', ''),
+                    "campaign_name": query.get('campaign_name', ''),
+                    "campaign_status": query.get('campaign_status', ''),
+                    "ad_group_name": query.get('ad_group_name', ''),
+                    "ad_group_status": query.get('ad_group_status', ''),
                 })
                 seen_terms.add(word)
 

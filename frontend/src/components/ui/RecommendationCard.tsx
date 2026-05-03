@@ -42,6 +42,11 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   campaign_review: "Campaign Review",
   a_b_test: "A/B Test",
   keyword_action: "Keyword Action",
+  schedule_bid_adjustment: "Schedule Bid Adjustment",
+  geo_bid_adjustment: "Geo Bid Adjustment",
+  device_bid_adjustment: "Device Bid Adjustment",
+  quality_improvement: "Quality Improvement",
+  ad_copy: "Ad Copy",
   pause: "Pause",
   scale_budget: "Scale Budget",
   review: "Review",
@@ -321,6 +326,16 @@ export function RecommendationCard({
           </div>
         )}
 
+        {rec.negative_keywords && rec.negative_keywords.length > 0 && (
+          <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wide mb-1">Negative Keywords</p>
+            <p className="text-xs text-amber-800 leading-relaxed break-words">
+              {rec.negative_keywords.map((keyword) => `-${keyword}`).join(", ")}
+              {rec.match_type ? ` (${rec.match_type})` : ""}
+            </p>
+          </div>
+        )}
+
         {/* Bid change detail */}
         {rec.actionType === "bid_adjustment" && rec.current_bid && rec.suggested_bid && (
           <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
@@ -340,6 +355,56 @@ export function RecommendationCard({
                   {bidChangePct !== null ? `${bidChangePct >= 0 ? "+" : ""}${bidChangePct.toFixed(1)}%` : "-"}
                 </p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {(rec.time_slot || rec.location || rec.device || rec.suggested_adjustment || rec.current_cpa || rec.current_spend || rec.current_performance) && (
+          <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wide mb-2">Adjustment Detail</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {rec.time_slot && (
+                <div>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Time</p>
+                  <p className="font-bold text-foreground">{rec.time_slot}</p>
+                </div>
+              )}
+              {rec.location && (
+                <div>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Location</p>
+                  <p className="font-bold text-foreground">{rec.location}</p>
+                </div>
+              )}
+              {rec.suggested_adjustment && (
+                <div>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Adjustment</p>
+                  <p className="font-bold text-blue-700">{rec.suggested_adjustment}</p>
+                </div>
+              )}
+              {rec.device && (
+                <div>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Device</p>
+                  <p className="font-bold text-foreground">{rec.device.replace(/_/g, " ")}</p>
+                </div>
+              )}
+              {typeof rec.current_cpa === "number" && (
+                <div>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Current CPA</p>
+                  <p className="font-bold text-foreground">{formatBid(rec.current_cpa)}</p>
+                </div>
+              )}
+              {typeof rec.current_spend === "number" && (
+                <div>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Spend</p>
+                  <p className="font-bold text-foreground">{formatBid(rec.current_spend)}</p>
+                </div>
+              )}
+              {rec.current_performance && (
+                <div className="col-span-2">
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Current Performance</p>
+                  <p className="font-bold text-foreground">{rec.current_performance}</p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -366,6 +431,20 @@ export function RecommendationCard({
               <p className="text-[10px] font-bold text-green-700 uppercase tracking-wide mb-0.5">Expected Outcome</p>
               <p className="text-xs text-green-700 leading-relaxed">{rec.expectedImpact}</p>
             </div>
+          </div>
+        )}
+
+        {rec.formula && (
+          <div className="bg-surface-hover border border-border/50 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-0.5">Calculation</p>
+            <p className="text-xs text-text-muted leading-relaxed">{rec.formula}</p>
+          </div>
+        )}
+
+        {rec.how_to_apply && (
+          <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-0.5">Manual Path</p>
+            <p className="text-xs text-blue-800 leading-relaxed">{rec.how_to_apply}</p>
           </div>
         )}
 

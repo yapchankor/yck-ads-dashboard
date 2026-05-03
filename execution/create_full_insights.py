@@ -72,7 +72,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     budget_pacing = analyze_budget_pacing(metrics, monthly_budget=None)  # User can set budget later
 
     print("Analyzing device performance...")
-    device_performance = analyze_device_performance(campaigns, active_keywords)
+    device_performance = analyze_device_performance(campaigns, active_keywords, metrics.get('device_performance', []))
 
     print("Creating landing page heatmap...")
     ads = metrics.get('ads', [])
@@ -215,7 +215,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
             "current_bid": current_bid,
             "suggested_bid": suggested_bid,
             "reason": f"Strong performer: {int(kw['conversions'])} conversions at RM {kw.get('cost_per_conversion', 0):.2f} CPA. CTR {kw['ctr']*100:.1f}%",
-            "expected_impact": f"+{impact_data.get('additional_conversions_monthly', 0):.1f} conversions/month, +RM {impact_data.get('additional_revenue_monthly', 0):,.2f} revenue ({impact_data['confidence_pct']}% confidence)",
+            "expected_impact": f"+{impact_data.get('additional_conversions_monthly', 0):.1f} conversions/month ({impact_data['confidence_pct']}% confidence)",
             "impact_data": impact_data,
             "automation": automation,
         })
@@ -337,8 +337,13 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
             "action": "add_negative",
             "target": f"Campaign-wide",
             "keyword": neg_kw['negative_keyword'],
+            "campaign_id": str(neg_kw.get('campaign_id', '')),
+            "campaign_name": neg_kw.get('campaign_name', 'Unknown'),
+            "ad_group_name": neg_kw.get('ad_group_name', 'Unknown'),
             "current": "N/A",
             "suggested": f"NEGATIVE - {neg_kw['match_type']}",
+            "negative_keywords": [neg_kw['negative_keyword']],
+            "match_type": neg_kw.get('match_type', 'PHRASE'),
             "reason": neg_kw['reason'],
             "expected_impact": f"Prevent RM {neg_kw['wasted_spend']:.2f} monthly waste ({impact_data['confidence_pct']}% confidence)",
             "impact_data": impact_data,
@@ -443,6 +448,11 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     if time_performance.get('recommendations'):
         for time_rec in time_performance['recommendations']:
             recommendations.append(time_rec)
+
+    # 10. DEVICE RECOMMENDATIONS
+    if device_performance.get('recommendations'):
+        for device_rec in device_performance['recommendations']:
+            recommendations.append(device_rec)
 
     # Calculate ROI
     print("Calculating ROI impact...")

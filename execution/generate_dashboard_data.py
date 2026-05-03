@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import os
 
-def generate_dashboard_data(metrics_file, recs_file, output_file):
+def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=None):
     # Load the metrics
     with open(metrics_file, 'r') as f:
         metrics = json.load(f)
@@ -14,6 +14,15 @@ def generate_dashboard_data(metrics_file, recs_file, output_file):
     # Load recommendations
     with open(recs_file, 'r') as f:
         recs_list = json.load(f)
+
+    if insights_file is None:
+        inferred = recs_file.replace('recommendations_enhanced_', 'insights_enhanced_')
+        insights_file = inferred if os.path.exists(inferred) else None
+
+    insights_payload = {}
+    if insights_file and os.path.exists(insights_file):
+        with open(insights_file, 'r') as f:
+            insights_payload = json.load(f)
 
     # === CAMPAIGNS ===
     campaigns = metrics.get('campaigns', [])
@@ -81,54 +90,172 @@ def generate_dashboard_data(metrics_file, recs_file, output_file):
         },
         'campaigns': [
             {
+                'id': str(c.get('id', '')),
+                'campaign_id': str(c.get('id', '')),
                 'name': c.get('name', 'Unknown'),
+                'campaign_name': c.get('name', 'Unknown'),
+                'platform': 'Google',
                 'status': c.get('status', 'UNKNOWN'),
                 'spend': round(c.get('cost', 0), 2),
+                'cost': round(c.get('cost', 0), 2),
                 'impressions': c.get('impressions', 0),
                 'clicks': c.get('clicks', 0),
                 'ctr': round(c.get('ctr', 0) * 100, 2) if c.get('ctr', 0) < 1 else round(c.get('ctr', 0), 2),
                 'conversions': round(c.get('conversions', 0), 2),
-                'cpa': round(c.get('cost_per_conversion', 0), 2)
+                'conversion_value': round(c.get('conversion_value', 0), 2),
+                'cpa': round(c.get('cost_per_conversion', 0), 2),
+                'cost_per_conversion': round(c.get('cost_per_conversion', 0), 2),
+                'roas': round(c.get('roas', 0), 2),
+                'daily_budget': round(c.get('daily_budget', 0), 2),
+                'budget_id': str(c.get('budget_id', '')) if c.get('budget_id') is not None else '',
+                'budget_resource_name': c.get('budget_resource_name'),
+                'budget_name': c.get('budget_name'),
+                'budget_status': c.get('budget_status'),
             }
             for c in sorted(active_campaigns, key=lambda x: x.get('cost', 0), reverse=True)
         ],
         'keywords': [
             {
+                'resource_name': k.get('resource_name'),
+                'target_id': k.get('resource_name'),
+                'keyword_id': k.get('keyword_id'),
                 'keyword': k.get('keyword_text', 'Unknown'),
+                'keyword_text': k.get('keyword_text', 'Unknown'),
                 'campaign': k.get('campaign_name', '-'),
+                'campaign_id': str(k.get('campaign_id', '')),
+                'campaign_name': k.get('campaign_name', '-'),
+                'campaign_status': k.get('campaign_status'),
+                'ad_group_id': str(k.get('ad_group_id', '')),
+                'ad_group_name': k.get('ad_group_name'),
+                'ad_group_status': k.get('ad_group_status'),
+                'status': k.get('status'),
+                'match_type': k.get('match_type'),
                 'impressions': k.get('impressions', 0),
                 'clicks': k.get('clicks', 0),
                 'ctr': round(k.get('ctr', 0) * 100, 2) if k.get('ctr', 0) < 1 else round(k.get('ctr', 0), 2),
                 'avg_cpc': round(k.get('avg_cpc', 0), 2),
-                'quality_score': k.get('quality_score', 0)
+                'cost': round(k.get('cost', 0), 2),
+                'conversions': round(k.get('conversions', 0), 2),
+                'conversion_value': round(k.get('conversion_value', 0), 2),
+                'cpa': round(k.get('cost_per_conversion', 0), 2),
+                'cost_per_conversion': round(k.get('cost_per_conversion', 0), 2),
+                'quality_score': k.get('quality_score', 0),
+                'ad_relevance': k.get('ad_relevance'),
+                'landing_page_experience': k.get('landing_page_experience'),
+                'expected_ctr': k.get('expected_ctr'),
             }
-            for k in sorted(keywords, key=lambda x: x.get('impressions', 0), reverse=True)[:15]
+            for k in sorted(keywords, key=lambda x: x.get('impressions', 0), reverse=True)
         ],
         'search_queries': [
             {
                 'query': sq.get('search_term', ''),
+                'search_term': sq.get('search_term', ''),
                 'campaign': sq.get('campaign_name', ''),
+                'campaign_id': str(sq.get('campaign_id', '')),
+                'campaign_name': sq.get('campaign_name', ''),
+                'campaign_status': sq.get('campaign_status'),
+                'ad_group_id': str(sq.get('ad_group_id', '')),
+                'ad_group_name': sq.get('ad_group_name'),
+                'ad_group_status': sq.get('ad_group_status'),
+                'match_type': sq.get('match_type'),
+                'status': sq.get('status'),
                 'impressions': sq.get('impressions', 0),
                 'clicks': sq.get('clicks', 0),
+                'ctr': round(sq.get('ctr', 0) * 100, 2) if sq.get('ctr', 0) < 1 else round(sq.get('ctr', 0), 2),
                 'cost': round(sq.get('cost', 0), 2),
-                'conversions': sq.get('conversions', 0)
+                'conversions': sq.get('conversions', 0),
+                'conversion_value': round(sq.get('conversion_value', 0), 2),
+                'avg_cpc': round(sq.get('avg_cpc', 0), 2),
+                'cpa': round(sq.get('cost', 0) / sq.get('conversions', 0), 2) if sq.get('conversions', 0) else 0,
             }
-            for sq in sorted(search_queries, key=lambda x: x.get('clicks', 0), reverse=True)[:10]
+            for sq in sorted(search_queries, key=lambda x: x.get('clicks', 0), reverse=True)
         ],
         'geo_performance': [
             {
                 'location_name': geo.get('location_name', ''),
+                'location_id': geo.get('criterion_id') or geo.get('country_criterion_id'),
+                'criterion_id': geo.get('criterion_id') or geo.get('country_criterion_id'),
                 'country_criterion_id': geo.get('country_criterion_id'),
+                'resource_name': geo.get('resource_name'),
+                'criterion_resource_name': geo.get('criterion_resource_name'),
+                'criterion_status': geo.get('criterion_status'),
+                'negative': geo.get('negative', False),
                 'location_type': geo.get('location_type', ''),
+                'campaign_id': str(geo.get('campaign_id', '')),
                 'campaign_name': geo.get('campaign_name', ''),
+                'campaign_status': geo.get('campaign_status'),
                 'impressions': geo.get('impressions', 0),
                 'clicks': geo.get('clicks', 0),
                 'ctr': geo.get('ctr', 0),
                 'cost': round(geo.get('cost', 0), 2),
-                'conversions': geo.get('conversions', 0)
+                'conversions': geo.get('conversions', 0),
+                'conversion_value': round(geo.get('conversion_value', 0), 2),
+                'cpa': round(geo.get('cost_per_conversion', 0), 2),
+                'cost_per_conversion': round(geo.get('cost_per_conversion', 0), 2),
             }
-            for geo in sorted(metrics.get('geo_performance', []), key=lambda x: x.get('clicks', 0), reverse=True)[:10]
+            for geo in sorted(metrics.get('geo_performance', []), key=lambda x: x.get('clicks', 0), reverse=True)
         ],
+        'ad_groups': [
+            {
+                'id': str(ag.get('id', '')),
+                'ad_group_id': str(ag.get('id', '')),
+                'name': ag.get('name', 'Unknown'),
+                'ad_group_name': ag.get('name', 'Unknown'),
+                'status': ag.get('status'),
+                'campaign_id': str(ag.get('campaign_id', '')),
+                'campaign_name': ag.get('campaign_name'),
+                'campaign_status': ag.get('campaign_status'),
+                'spend': round(ag.get('cost', 0), 2),
+                'cost': round(ag.get('cost', 0), 2),
+                'impressions': ag.get('impressions', 0),
+                'clicks': ag.get('clicks', 0),
+                'ctr': round(ag.get('ctr', 0) * 100, 2) if ag.get('ctr', 0) < 1 else round(ag.get('ctr', 0), 2),
+                'avg_cpc': round(ag.get('avg_cpc', 0), 2),
+                'conversions': round(ag.get('conversions', 0), 2),
+                'conversion_value': round(ag.get('conversion_value', 0), 2),
+                'cpa': round(ag.get('cost_per_conversion', 0), 2),
+                'cost_per_conversion': round(ag.get('cost_per_conversion', 0), 2),
+                'roas': round(ag.get('roas', 0), 2),
+            }
+            for ag in sorted(metrics.get('ad_groups', []), key=lambda x: x.get('cost', 0), reverse=True)
+        ],
+        'ads': [
+            {
+                'resource_name': ad.get('resource_name'),
+                'ad_id': str(ad.get('ad_id', '')),
+                'ad_type': ad.get('ad_type'),
+                'status': ad.get('status'),
+                'campaign_id': str(ad.get('campaign_id', '')),
+                'campaign_name': ad.get('campaign_name'),
+                'campaign_status': ad.get('campaign_status'),
+                'ad_group_id': str(ad.get('ad_group_id', '')),
+                'ad_group_name': ad.get('ad_group_name'),
+                'ad_group_status': ad.get('ad_group_status'),
+                'final_urls': ad.get('final_urls', []),
+                'headlines': ad.get('headlines', []),
+                'descriptions': ad.get('descriptions', []),
+                'impressions': ad.get('impressions', 0),
+                'clicks': ad.get('clicks', 0),
+                'ctr': round(ad.get('ctr', 0) * 100, 2) if ad.get('ctr', 0) < 1 else round(ad.get('ctr', 0), 2),
+                'spend': round(ad.get('cost', 0), 2),
+                'cost': round(ad.get('cost', 0), 2),
+                'conversions': round(ad.get('conversions', 0), 2),
+                'conversion_value': round(ad.get('conversion_value', 0), 2),
+                'roas': round(ad.get('roas', 0), 2),
+            }
+            for ad in sorted(metrics.get('ads', []), key=lambda x: x.get('impressions', 0), reverse=True)
+        ],
+        'negative_keywords': metrics.get('negative_keywords', []),
+        'google_negative_keywords': metrics.get('google_negative_keywords') or metrics.get('negative_keywords', []),
+        'budget_pacing': insights_payload.get('budget_pacing', {}),
+        'landing_page_heatmap': insights_payload.get('landing_page_heatmap', {}),
+        'quality_score_roadmap': insights_payload.get('quality_score_roadmap', {}),
+        'search_query_analysis': insights_payload.get('search_query_analysis', {}),
+        'device_performance': insights_payload.get('device_performance', {}),
+        'google_device_rows': metrics.get('device_performance', []),
+        'conversion_value_alert': insights_payload.get('conversion_value_alert'),
+        'google_time_performance': insights_payload.get('time_performance', {}),
+        'google_geo_analysis': insights_payload.get('geo_performance', {}),
         'insights': [],
         'recommendations': []
     }
@@ -161,10 +288,15 @@ def generate_dashboard_data(metrics_file, recs_file, output_file):
             'description': f'{day_name} generates the most engagement ({daily_perf[best_day]["clicks"]:,} clicks). Consider dayparting strategy.'
         })
 
+    enabled_campaigns = [c for c in campaigns if str(c.get('status', '')).upper() == 'ENABLED']
+    paused_campaigns = [c for c in campaigns if str(c.get('status', '')).upper() == 'PAUSED']
     dashboard_data['insights'].append({
         'type': 'info',
         'title': 'Campaign Status',
-        'description': f'All campaigns are currently PAUSED. Total historical spend: RM {total_spend:,.2f}.'
+        'description': (
+            f'{len(enabled_campaigns)} enabled and {len(paused_campaigns)} paused Google campaigns '
+            f'in this data set. Total spend: RM {total_spend:,.2f}.'
+        )
     })
 
     if total_conversions > 0:
@@ -200,7 +332,7 @@ def generate_dashboard_data(metrics_file, recs_file, output_file):
         )
         return title, suggested_action
 
-    for rec in recs_list[:8]:
+    for rec in recs_list:
         action = rec.get('action', 'review').replace('_', ' ').title()
         keyword = rec.get('keyword', '')
         target = rec.get('target', '')
@@ -243,6 +375,31 @@ def generate_dashboard_data(metrics_file, recs_file, output_file):
                 title = bid_title
             if bid_suggested_action:
                 suggested_action = bid_suggested_action
+        elif action_type == 'schedule_bid_adjustment':
+            slot = rec.get('time_slot') or target or 'schedule'
+            adjustment = rec.get('suggested_adjustment') or 'adjust'
+            title = f"{adjustment} schedule bid: {slot}"
+            suggested_action = f"Apply {adjustment} bid adjustment for {slot} after reviewing campaign schedule coverage."
+        elif action_type == 'geo_bid_adjustment':
+            location = rec.get('location') or target or 'location'
+            adjustment = rec.get('suggested_adjustment') or 'adjust'
+            title = f"{adjustment} location bid: {location}"
+            suggested_action = f"Apply {adjustment} bid adjustment for {location} where campaign targeting supports it."
+        elif action_type == 'device_bid_adjustment':
+            device = rec.get('device') or target or 'device'
+            adjustment = rec.get('suggested_adjustment') or 'adjust'
+            title = f"{adjustment} device bid: {str(device).replace('_', ' ').title()}"
+            suggested_action = f"Review device performance and apply a {adjustment} bid adjustment for {str(device).replace('_', ' ').title()} if campaign settings support it."
+        elif action_type == 'geo_exclusion':
+            location = rec.get('location') or target or 'location'
+            title = f"Exclude location: {location}"
+            suggested_action = f"Exclude {location} from campaigns with verified zero-conversion spend."
+        elif action_type == 'quality_improvement':
+            title = f"Improve Quality Score: {rec.get('issue') or target}"
+            suggested_action = rec.get('suggested') or "Review Quality Score drivers and improve the affected landing pages, ad relevance, or CTR."
+        elif action_type == 'ad_copy':
+            title = f"Create ad copy: {rec.get('ad_group_name') or 'ad group'}"
+            suggested_action = f"Draft and review new responsive search ad copy for {rec.get('ad_group_name') or 'this ad group'}."
 
         # Build recommendation object
         rec_obj = {
@@ -250,6 +407,7 @@ def generate_dashboard_data(metrics_file, recs_file, output_file):
             'recommendation_id': rec_id,
             'title': title,
             'description': rec.get('reason', ''),
+            'platform': 'Google',
             'impact': 'High' if 'wasted' in rec.get('reason', '').lower() else 'Medium',
             'expected_impact': rec.get('expected_impact') or rec.get('impact_text') or "Improved Performance",
             'action_type': action_type,
@@ -259,9 +417,29 @@ def generate_dashboard_data(metrics_file, recs_file, output_file):
             'campaign_id': campaign_id,
             'campaign_name': campaign_name,
             'ad_group_name': ad_group_name,
-            'match_type': 'PHRASE',  # Default to phrase match for negative keywords
+            'negative_keywords': rec.get('negative_keywords') or ([keyword] if action_type == 'add_negative_keyword' and keyword else []),
+            'match_type': rec.get('match_type') or 'PHRASE',
             'impact_data': rec.get('impact_data') or {},
             'automation': rec.get('automation') or {},
+            'formula': (rec.get('impact_data') or {}).get('formula'),
+            'assumptions': (rec.get('impact_data') or {}).get('assumptions') or [],
+            'current': rec.get('current'),
+            'suggested': rec.get('suggested'),
+            'issue': rec.get('issue'),
+            'headline': rec.get('headline'),
+            'description_copy': rec.get('description'),
+            'final_url': rec.get('final_url'),
+            'image_prompt': rec.get('image_prompt'),
+            'location': rec.get('location'),
+            'location_id': rec.get('location_id') or rec.get('country_criterion_id'),
+            'campaign_ids': rec.get('campaign_ids') or [],
+            'current_cpa': rec.get('current_cpa'),
+            'suggested_adjustment': rec.get('suggested_adjustment'),
+            'time_slot': rec.get('time_slot'),
+            'current_spend': rec.get('current_spend'),
+            'current_performance': rec.get('current_performance'),
+            'how_to_apply': rec.get('how_to_apply'),
+            'device': rec.get('device'),
         }
 
         # Add bid-related fields for bid_adjustment recommendations

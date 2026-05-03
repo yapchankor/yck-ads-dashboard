@@ -16,6 +16,29 @@ function fmtMYR(n: number) {
 function fmtPct(n: number) {
   return `${n.toFixed(2)}%`;
 }
+function asPct(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return n > 1 ? n : n * 100;
+}
+function fmtMaybeMYR(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? fmtMYR(parsed) : <span className="text-text-muted">-</span>;
+}
+function fmtMaybePct(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? fmtPct(asPct(parsed)) : <span className="text-text-muted">-</span>;
+}
+function fmtEnum(value: unknown) {
+  return String(value || "-")
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+function truncateUrl(value: unknown) {
+  const text = String(value || "-");
+  if (text.length <= 64) return text;
+  return `${text.slice(0, 58)}...`;
+}
 function isTrendValue(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -96,6 +119,18 @@ function InsightCard({ insight }: { insight: any }) {
   );
 }
 
+function StatusPill({ value }: { value: unknown }) {
+  const status = String(value || "UNKNOWN").toUpperCase();
+  const isActive = status === "ACTIVE" || status === "ENABLED";
+  const isPaused = status === "PAUSED";
+  const className = isActive
+    ? "bg-green-100 text-green-700"
+    : isPaused
+    ? "bg-amber-100 text-amber-700"
+    : "bg-surface-hover text-text-muted";
+  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${className}`}>{fmtEnum(status)}</span>;
+}
+
 // ─── page ────────────────────────────────────────────────────────────────────
 export default function GoogleAdsPage() {
   const [d, setD] = useState<any>(null);
@@ -159,8 +194,17 @@ export default function GoogleAdsPage() {
   const searchQueries: any[] = d.search_queries || [];
   const geoGoogle: any[] = d.geo_performance || [];
   const keywords: any[] = d.keywords || [];
+  const adGroups: any[] = d.ad_groups || [];
+  const googleAds: any[] = d.google_ads || [];
   const insights: any[] = d.insights || [];
   const recommendations: any[] = (d.recommendations || []).filter((r: any) => r.platform !== "Meta");
+  const budgetPacing = d.budget_pacing || {};
+  const landingHeatmap = d.landing_page_heatmap || {};
+  const qualityRoadmap = d.quality_score_roadmap || {};
+  const searchAnalysis = d.search_query_analysis || {};
+  const googleTime = d.google_time_performance || {};
+  const googleDevice = d.google_device_performance || {};
+  const negativeKeywords: any[] = d.google_negative_keywords || [];
   const trends = d.trends || {};
   const trendItems = [
     { label: "Spend Change", key: "spend_change" },
@@ -181,6 +225,16 @@ export default function GoogleAdsPage() {
   // Performers
   const topPerformers = [...googleCampaigns].filter((c: any) => c.conversions > 0).sort((a, b) => a.cpa - b.cpa).slice(0, 3);
   const underperformers = [...googleCampaigns].filter((c: any) => c.spend > 10 && c.conversions === 0).sort((a, b) => b.spend - a.spend).slice(0, 3);
+  const landingRows: any[] = Array.isArray(landingHeatmap.heatmap) ? landingHeatmap.heatmap : [];
+  const landingIssues: any[] = Array.isArray(landingHeatmap.issues) ? landingHeatmap.issues : [];
+  const qsPlans: any[] = Array.isArray(qualityRoadmap.improvement_plan) ? qualityRoadmap.improvement_plan : [];
+  const qsSamples: any[] = Array.isArray(qualityRoadmap.affected_keywords_sample) ? qualityRoadmap.affected_keywords_sample : [];
+  const searchWasteRows: any[] = Array.isArray(searchAnalysis.wasted_spend_queries) ? searchAnalysis.wasted_spend_queries : [];
+  const negativeSuggestionRows: any[] = Array.isArray(searchAnalysis.negative_keyword_suggestions) ? searchAnalysis.negative_keyword_suggestions : [];
+  const hourlyRows: any[] = Array.isArray(googleTime.hourly_performance) ? googleTime.hourly_performance : [];
+  const dailyRows: any[] = Array.isArray(googleTime.daily_performance) ? googleTime.daily_performance : [];
+  const deviceRows: any[] = Array.isArray(googleDevice.devices) ? googleDevice.devices : [];
+  const geoSummary = d.google_geo_analysis?.summary || {};
 
   return (
     <DashboardLayout>
@@ -241,6 +295,90 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
+        {d.conversion_value_alert && (
+          <SectionCard title="Conversion Value Tracking">
+            <div className="p-4">
+              <div className="rounded-xl border border-red-100 bg-red-50 p-4">
+                <p className="text-sm font-bold text-red-700">{d.conversion_value_alert.issue}</p>
+                <p className="mt-1 text-xs leading-relaxed text-red-700/80">{d.conversion_value_alert.description}</p>
+              </div>
+            </div>
+          </SectionCard>
+        )}
+
+        {budgetPacing.days_in_period && (
+          <SectionCard title="Budget Pacing" description="Spend rate and projected monthly spend from the selected Google Ads period.">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Daily Avg Spend</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(budgetPacing.daily_avg_spend || 0)}</p>
+              </div>
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Projected Monthly</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(budgetPacing.projected_monthly_spend || 0)}</p>
+              </div>
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Days Analysed</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{fmt(budgetPacing.days_in_period || 0)}</p>
+              </div>
+            </div>
+          </SectionCard>
+        )}
+
+        {(searchAnalysis.total_queries || searchWasteRows.length > 0 || negativeSuggestionRows.length > 0) && (
+          <SectionCard title="Search Term Intelligence" description="Waste, intent gaps, and negative-keyword opportunities from actual user searches.">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Queries Analysed</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{fmt(searchAnalysis.total_queries || searchQueries.length)}</p>
+              </div>
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Wasted Spend</p>
+                <p className="mt-1 text-xl font-bold text-red-500">{fmtMYR(searchAnalysis.total_wasted_spend || 0)}</p>
+              </div>
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Negative Ideas</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{fmt(negativeSuggestionRows.length)}</p>
+              </div>
+            </div>
+          </SectionCard>
+        )}
+
+        {(qualityRoadmap.total_low_qs || qsPlans.length > 0 || qsSamples.length > 0) && (
+          <SectionCard title="Quality Score Roadmap" description="Where lower ad relevance, expected CTR, or landing-page experience is likely increasing CPC.">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Low Quality Score Keywords</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{fmt(qualityRoadmap.total_low_qs || 0)}</p>
+                {qualityRoadmap.expected_impact && (
+                  <p className="mt-2 text-xs leading-relaxed text-text-muted">{qualityRoadmap.expected_impact}</p>
+                )}
+              </div>
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Spend Affected</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(qualityRoadmap.total_spend_low_qs || 0)}</p>
+                {qualityRoadmap.avg_quality_score && (
+                  <p className="mt-2 text-xs leading-relaxed text-text-muted">Average low QS: {Number(qualityRoadmap.avg_quality_score).toFixed(1)}/10</p>
+                )}
+              </div>
+            </div>
+            {qsPlans.length > 0 && (
+              <div className="border-t border-border/60">
+                <DetailTable
+                  headers={[
+                    { label: "Issue", key: "issue" },
+                    { label: "Priority", key: "priority", render: (v) => <StatusPill value={v} /> },
+                    { label: "Keywords", key: "affected_keywords", align: "right", render: (v) => fmt(v) },
+                    { label: "Expected Impact", key: "expected_impact" },
+                    { label: "Time", key: "estimated_time" },
+                  ]}
+                  rows={qsPlans}
+                />
+              </div>
+            )}
+          </SectionCard>
+        )}
+
         {/* ── Top Performers & Issues ── */}
         {(topPerformers.length > 0 || underperformers.length > 0) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -278,17 +416,36 @@ export default function GoogleAdsPage() {
           <DetailTable
             headers={[
               { label: "Campaign", key: "name" },
-              { label: "Status", key: "status", render: (v) => <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${v === "Active" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{v}</span> },
+              { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
+              { label: "Daily Budget", key: "daily_budget", align: "right", render: (v) => fmtMaybeMYR(v) },
               { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
               { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
               { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-              { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(v * 100) : "—" },
+              { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(asPct(v)) : "—" },
               { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
               { label: "CPA", key: "cpa", align: "right", render: (v) => v > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
             ]}
             rows={googleCampaigns}
           />
         </SectionCard>
+
+        {adGroups.length > 0 && (
+          <SectionCard title={`Ad Group Performance (${adGroups.length})`} description="Ad group evidence for budget, keyword, and ad-copy decisions.">
+            <DetailTable
+              headers={[
+                { label: "Ad Group", key: "ad_group_name" },
+                { label: "Campaign", key: "campaign_name" },
+                { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
+                { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtMaybePct(v) },
+                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                { label: "CPA", key: "cpa", align: "right", render: (v) => fmtMaybeMYR(v) },
+              ]}
+              rows={adGroups}
+            />
+          </SectionCard>
+        )}
 
         {/* ── Keywords ── */}
         {keywords.length > 0 && (
@@ -297,10 +454,15 @@ export default function GoogleAdsPage() {
               headers={[
                 { label: "Keyword", key: "keyword" },
                 { label: "Campaign", key: "campaign" },
+                { label: "Ad Group", key: "ad_group_name" },
+                { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
                 { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
                 { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v * 100) },
+                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(asPct(v)) },
                 { label: "Avg CPC", key: "avg_cpc", align: "right", render: (v) => fmtMYR(v) },
+                { label: "Cost", key: "cost", align: "right", render: (v) => fmtMYR(v) },
+                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                { label: "CPA", key: "cpa", align: "right", render: (v) => fmtMaybeMYR(v) },
                 { label: "QS", key: "quality_score", align: "right", render: (v) => v != null
                   ? <span className={`font-bold ${v >= 7 ? "text-green-600" : v >= 5 ? "text-amber-600" : "text-red-500"}`}>{v}/10</span>
                   : <span className="text-text-muted">—</span>
@@ -318,14 +480,48 @@ export default function GoogleAdsPage() {
               headers={[
                 { label: "Search Query", key: "query" },
                 { label: "Campaign", key: "campaign" },
+                { label: "Ad Group", key: "ad_group_name" },
+                { label: "Match", key: "match_type", render: (v) => fmtEnum(v) },
+                { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
                 { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
                 { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v * 100) },
+                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(asPct(v)) },
                 { label: "Cost", key: "cost", align: "right", render: (v) => fmtMYR(v) },
                 { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
                 { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
               ]}
               rows={searchQueries}
+            />
+          </SectionCard>
+        )}
+
+        {searchWasteRows.length > 0 && (
+          <SectionCard title="Wasted Search Terms" description="Searches with zero conversions and enough spend to justify negative-keyword review.">
+            <DetailTable
+              headers={[
+                { label: "Search Term", key: "search_term" },
+                { label: "Campaign", key: "campaign_name" },
+                { label: "Ad Group", key: "ad_group_name" },
+                { label: "Cost", key: "cost", align: "right", render: (v) => <span className="font-semibold text-red-500">{fmtMYR(v)}</span> },
+                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
+              ]}
+              rows={searchWasteRows}
+            />
+          </SectionCard>
+        )}
+
+        {negativeSuggestionRows.length > 0 && (
+          <SectionCard title="Negative Keyword Candidates" description="Pattern-based negatives detected from wasted search-term evidence.">
+            <DetailTable
+              headers={[
+                { label: "Negative Keyword", key: "negative_keyword" },
+                { label: "Match", key: "match_type", render: (v) => fmtEnum(v) },
+                { label: "Example Query", key: "example_query" },
+                { label: "Campaign", key: "campaign_name" },
+                { label: "Wasted Spend", key: "wasted_spend", align: "right", render: (v) => fmtMYR(v) },
+              ]}
+              rows={negativeSuggestionRows}
             />
           </SectionCard>
         )}
@@ -339,13 +535,148 @@ export default function GoogleAdsPage() {
                 { label: "Campaign", key: "campaign_name" },
                 { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
                 { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v * 100) },
+                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(asPct(v)) },
                 { label: "Cost", key: "cost", align: "right", render: (v) => fmtMYR(v) },
                 { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
               ]}
               rows={geoGoogle}
             />
           </SectionCard>
+        )}
+
+        {(geoSummary.best_location || geoSummary.total_spend || geoSummary.total_conversions) && (
+          <SectionCard title="Geographic Summary" description="Aggregated Google location findings used for geo recommendations.">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Best Location</p>
+                <p className="mt-1 text-lg font-bold text-foreground">{geoSummary.best_location || "-"}</p>
+              </div>
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Geo Spend</p>
+                <p className="mt-1 text-lg font-bold text-foreground">{fmtMYR(geoSummary.total_spend || 0)}</p>
+              </div>
+              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Geo Conversions</p>
+                <p className="mt-1 text-lg font-bold text-foreground">{fmt(geoSummary.total_conversions || 0)}</p>
+              </div>
+            </div>
+          </SectionCard>
+        )}
+
+        {deviceRows.length > 0 && (
+          <SectionCard title="Device Performance" description="Mobile, desktop, and tablet performance from Google Ads device segmentation.">
+            <DetailTable
+              headers={[
+                { label: "Device", key: "device", render: (v) => fmtEnum(v) },
+                { label: "Campaigns", key: "campaign_count", align: "right", render: (v) => fmt(v) },
+                { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
+                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtMaybePct(v) },
+                { label: "Cost", key: "cost", align: "right", render: (v) => fmtMYR(v) },
+                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                { label: "Conv Rate", key: "conversion_rate", align: "right", render: (v) => fmtMaybePct(v) },
+                { label: "CPA", key: "cost_per_conversion", align: "right", render: (v) => fmtMaybeMYR(v) },
+              ]}
+              rows={deviceRows}
+            />
+          </SectionCard>
+        )}
+
+        {landingRows.length > 0 && (
+          <SectionCard title={`Landing Page Heatmap (${landingHeatmap.total_landing_pages || landingRows.length})`} description="Landing pages mapped to keyword/ad-group traffic, conversion rate, and CPA.">
+            {landingIssues.length > 0 && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-4">
+                {landingIssues.map((issue, i) => (
+                  <div key={i} className="rounded-xl border border-amber-100 bg-amber-50 p-4">
+                    <p className="text-sm font-bold text-amber-800">{issue.issue}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-700">{issue.description}</p>
+                    <p className="mt-2 text-xs font-semibold text-amber-800">{issue.recommendation}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <DetailTable
+              headers={[
+                { label: "Landing Page", key: "landing_page", render: (v) => <span title={String(v || "")}>{truncateUrl(v)}</span> },
+                { label: "Keywords", key: "keywords_count", align: "right", render: (v) => fmt(v) },
+                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                { label: "Cost", key: "cost", align: "right", render: (v) => fmtMYR(v) },
+                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                { label: "Conv Rate", key: "conversion_rate", align: "right", render: (v) => fmtMaybePct(v) },
+                { label: "CPA", key: "cost_per_conversion", align: "right", render: (v) => fmtMaybeMYR(v) },
+              ]}
+              rows={landingRows}
+            />
+          </SectionCard>
+        )}
+
+        {googleAds.length > 0 && (
+          <SectionCard title={`Responsive Search Ads (${googleAds.length})`} description="Ad-level performance, status, landing URL, and first headline for copy analysis.">
+            <DetailTable
+              headers={[
+                { label: "Headline", key: "headlines", render: (v) => Array.isArray(v) ? (v[0] || "-") : "-" },
+                { label: "Ad Group", key: "ad_group_name" },
+                { label: "Campaign", key: "campaign_name" },
+                { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
+                { label: "Final URL", key: "final_urls", render: (v) => <span title={Array.isArray(v) ? v[0] : ""}>{truncateUrl(Array.isArray(v) ? v[0] : "")}</span> },
+                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtMaybePct(v) },
+                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+              ]}
+              rows={googleAds}
+            />
+          </SectionCard>
+        )}
+
+        {negativeKeywords.length > 0 && (
+          <SectionCard title={`Negative Keyword Inventory (${negativeKeywords.length})`} description="Existing campaign and ad-group negatives used to prevent duplicate recommendations.">
+            <DetailTable
+              headers={[
+                { label: "Keyword", key: "keyword" },
+                { label: "Level", key: "level", render: (v) => fmtEnum(v) },
+                { label: "Match", key: "match_type", render: (v) => fmtEnum(v) },
+                { label: "Campaign", key: "campaign_name" },
+                { label: "Ad Group", key: "ad_group_name", render: (v) => v || "-" },
+                { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
+              ]}
+              rows={negativeKeywords}
+            />
+          </SectionCard>
+        )}
+
+        {(hourlyRows.length > 0 || dailyRows.length > 0) && (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {hourlyRows.length > 0 && (
+              <SectionCard title="Hour of Day Performance" description="Aggregated by hour across enabled Google campaigns in the selected range.">
+                <DetailTable
+                  headers={[
+                    { label: "Hour", key: "hour_label" },
+                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                    { label: "Cost", key: "cost", align: "right", render: (v) => fmtMYR(v) },
+                    { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                    { label: "Conv Rate", key: "conversion_rate", align: "right", render: (v) => fmtMaybePct(v) },
+                    { label: "CPA", key: "cost_per_conversion", align: "right", render: (v) => fmtMaybeMYR(v) },
+                  ]}
+                  rows={hourlyRows}
+                />
+              </SectionCard>
+            )}
+            {dailyRows.length > 0 && (
+              <SectionCard title="Day of Week Performance" description="Best and weakest days by conversions and CPA.">
+                <DetailTable
+                  headers={[
+                    { label: "Day", key: "day" },
+                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                    { label: "Cost", key: "cost", align: "right", render: (v) => fmtMYR(v) },
+                    { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                    { label: "Conv Rate", key: "conversion_rate", align: "right", render: (v) => fmtMaybePct(v) },
+                    { label: "CPA", key: "cost_per_conversion", align: "right", render: (v) => fmtMaybeMYR(v) },
+                  ]}
+                  rows={dailyRows}
+                />
+              </SectionCard>
+            )}
+          </div>
         )}
 
         {/* ── Recommendations ── */}

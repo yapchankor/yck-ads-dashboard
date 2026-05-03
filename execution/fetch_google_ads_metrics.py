@@ -65,6 +65,10 @@ def fetch_campaign_metrics(client, customer_id, start_date, end_date):
             metrics.value_per_conversion,
             campaign.target_cpa.target_cpa_micros,
             campaign.target_roas.target_roas,
+            campaign_budget.id,
+            campaign_budget.resource_name,
+            campaign_budget.name,
+            campaign_budget.status,
             campaign_budget.amount_micros
         FROM campaign
         WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
@@ -93,6 +97,11 @@ def fetch_campaign_metrics(client, customer_id, start_date, end_date):
                     "cost_per_conversion": row.metrics.cost_per_conversion / 1_000_000 if row.metrics.cost_per_conversion else 0,
                     "value_per_conversion": row.metrics.value_per_conversion,
                     "roas": (row.metrics.conversions_value / (row.metrics.cost_micros / 1_000_000)) if row.metrics.cost_micros > 0 else 0,
+                    "budget_id": row.campaign_budget.id,
+                    "budget_resource_name": row.campaign_budget.resource_name,
+                    "budget_name": row.campaign_budget.name,
+                    "budget_status": row.campaign_budget.status.name,
+                    "daily_budget": row.campaign_budget.amount_micros / 1_000_000,
                 }
                 campaigns.append(campaign_data)
 
@@ -124,7 +133,12 @@ def fetch_campaign_daily_metrics(client, customer_id, start_date, end_date):
             metrics.conversions,
             metrics.conversions_value,
             metrics.cost_per_conversion,
-            metrics.value_per_conversion
+            metrics.value_per_conversion,
+            campaign_budget.id,
+            campaign_budget.resource_name,
+            campaign_budget.name,
+            campaign_budget.status,
+            campaign_budget.amount_micros
         FROM campaign
         WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
             AND campaign.status != 'REMOVED'
@@ -155,6 +169,11 @@ def fetch_campaign_daily_metrics(client, customer_id, start_date, end_date):
                     "cost_per_conversion": cost / conversions if conversions > 0 else 0,
                     "value_per_conversion": row.metrics.value_per_conversion,
                     "roas": row.metrics.conversions_value / cost if cost > 0 else 0,
+                    "budget_id": row.campaign_budget.id,
+                    "budget_resource_name": row.campaign_budget.resource_name,
+                    "budget_name": row.campaign_budget.name,
+                    "budget_status": row.campaign_budget.status.name,
+                    "daily_budget": row.campaign_budget.amount_micros / 1_000_000,
                 })
 
     except GoogleAdsException as ex:
@@ -172,6 +191,7 @@ def fetch_adgroup_metrics(client, customer_id, start_date, end_date):
         SELECT
             campaign.id,
             campaign.name,
+            campaign.status,
             ad_group.id,
             ad_group.name,
             ad_group.status,
@@ -198,6 +218,7 @@ def fetch_adgroup_metrics(client, customer_id, start_date, end_date):
                 ad_group_data = {
                     "campaign_id": row.campaign.id,
                     "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
                     "id": row.ad_group.id,
                     "name": row.ad_group.name,
                     "status": row.ad_group.status.name,
@@ -307,8 +328,11 @@ def fetch_ad_metrics(client, customer_id, start_date, end_date):
         SELECT
             campaign.id,
             campaign.name,
+            campaign.status,
             ad_group.id,
             ad_group.name,
+            ad_group.status,
+            ad_group_ad.resource_name,
             ad_group_ad.ad.id,
             ad_group_ad.ad.type,
             ad_group_ad.ad.final_urls,
@@ -345,8 +369,11 @@ def fetch_ad_metrics(client, customer_id, start_date, end_date):
                 ad_data = {
                     "campaign_id": row.campaign.id,
                     "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
                     "ad_group_id": row.ad_group.id,
                     "ad_group_name": row.ad_group.name,
+                    "ad_group_status": row.ad_group.status.name,
+                    "resource_name": row.ad_group_ad.resource_name,
                     "ad_id": row.ad_group_ad.ad.id,
                     "ad_type": row.ad_group_ad.ad.type_.name,
                     "status": row.ad_group_ad.status.name,
@@ -444,7 +471,11 @@ def fetch_geographic_metrics(client, customer_id, start_date, end_date):
         SELECT
             campaign.id,
             campaign.name,
+            campaign.status,
+            campaign_criterion.resource_name,
             campaign_criterion.criterion_id,
+            campaign_criterion.type,
+            campaign_criterion.status,
             campaign_criterion.location.geo_target_constant,
             campaign_criterion.proximity.address.city_name,
             campaign_criterion.proximity.address.province_name,
@@ -458,7 +489,8 @@ def fetch_geographic_metrics(client, customer_id, start_date, end_date):
         WHERE campaign_criterion.type IN ('LOCATION', 'PROXIMITY')
     """
 
-    location_names = {}  # criterion_id -> location name
+    location_names = {}  # (campaign_id, criterion_id) -> location name
+    location_metadata = {}  # (campaign_id, criterion_id) -> targeting metadata
 
     try:
         response = ga_service.search_stream(customer_id=customer_id, query=location_targets_query)
@@ -466,6 +498,13 @@ def fetch_geographic_metrics(client, customer_id, start_date, end_date):
             for row in batch.results:
                 criterion_id = row.campaign_criterion.criterion_id
                 campaign_id = row.campaign.id
+                location_metadata[(campaign_id, criterion_id)] = {
+                    "campaign_status": row.campaign.status.name,
+                    "criterion_resource_name": row.campaign_criterion.resource_name,
+                    "criterion_type": row.campaign_criterion.type_.name,
+                    "criterion_status": row.campaign_criterion.status.name,
+                    "negative": row.campaign_criterion.negative,
+                }
 
                 # Check for proximity (radius) targeting
                 if hasattr(row.campaign_criterion, 'proximity') and row.campaign_criterion.proximity:
@@ -527,6 +566,7 @@ def fetch_geographic_metrics(client, customer_id, start_date, end_date):
         SELECT
             campaign.id,
             campaign.name,
+            campaign.status,
             location_view.resource_name,
             metrics.impressions,
             metrics.clicks,
@@ -561,11 +601,19 @@ def fetch_geographic_metrics(client, customer_id, start_date, end_date):
 
                 # Look up location name from our pre-fetched location targets
                 location_name = location_names.get((campaign_id, criterion_id), f"Location {criterion_id}")
+                metadata = location_metadata.get((campaign_id, criterion_id), {})
 
                 location_data = {
                     "campaign_id": campaign_id,
                     "campaign_name": campaign_name,
+                    "campaign_status": row.campaign.status.name,
                     "criterion_id": criterion_id,
+                    "country_criterion_id": criterion_id,
+                    "resource_name": row.location_view.resource_name,
+                    "criterion_resource_name": metadata.get("criterion_resource_name"),
+                    "criterion_type": metadata.get("criterion_type"),
+                    "criterion_status": metadata.get("criterion_status"),
+                    "negative": metadata.get("negative", False),
                     "location_name": location_name,
                     "impressions": row.metrics.impressions,
                     "clicks": row.metrics.clicks,
@@ -596,6 +644,7 @@ def fetch_geographic_metrics_fallback(client, customer_id, start_date, end_date)
         SELECT
             campaign.id,
             campaign.name,
+            campaign.status,
             geographic_view.country_criterion_id,
             geographic_view.location_type,
             metrics.impressions,
@@ -621,7 +670,9 @@ def fetch_geographic_metrics_fallback(client, customer_id, start_date, end_date)
                 location_data = {
                     "campaign_id": row.campaign.id,
                     "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
                     "country_criterion_id": row.geographic_view.country_criterion_id if hasattr(row.geographic_view, 'country_criterion_id') else None,
+                    "criterion_id": row.geographic_view.country_criterion_id if hasattr(row.geographic_view, 'country_criterion_id') else None,
                     "location_type": row.geographic_view.location_type.name if hasattr(row.geographic_view, 'location_type') else "UNKNOWN",
                     "location_name": None,
                     "impressions": row.metrics.impressions,
@@ -648,6 +699,9 @@ def fetch_time_segmented_metrics(client, customer_id, start_date, end_date):
 
     query = f"""
         SELECT
+            campaign.id,
+            campaign.name,
+            campaign.status,
             segments.hour,
             segments.day_of_week,
             segments.date,
@@ -671,6 +725,9 @@ def fetch_time_segmented_metrics(client, customer_id, start_date, end_date):
         for batch in response:
             for row in batch.results:
                 time_record = {
+                    "campaign_id": row.campaign.id,
+                    "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
                     "date": row.segments.date,
                     "hour": row.segments.hour,
                     "day_of_week": row.segments.day_of_week.name if hasattr(row.segments, 'day_of_week') else "UNKNOWN",
@@ -691,6 +748,143 @@ def fetch_time_segmented_metrics(client, customer_id, start_date, end_date):
         return []
 
     return time_data
+
+
+def fetch_device_metrics(client, customer_id, start_date, end_date):
+    """Fetch campaign performance segmented by device."""
+    ga_service = client.get_service("GoogleAdsService")
+
+    query = f"""
+        SELECT
+            campaign.id,
+            campaign.name,
+            campaign.status,
+            segments.device,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.ctr,
+            metrics.average_cpc,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value
+        FROM campaign
+        WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
+            AND metrics.impressions > 0
+        ORDER BY metrics.cost_micros DESC
+    """
+
+    device_data = []
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=query)
+
+        for batch in response:
+            for row in batch.results:
+                cost = row.metrics.cost_micros / 1_000_000
+                conversions = row.metrics.conversions
+                device_data.append({
+                    "campaign_id": row.campaign.id,
+                    "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
+                    "device": row.segments.device.name,
+                    "impressions": row.metrics.impressions,
+                    "clicks": row.metrics.clicks,
+                    "ctr": row.metrics.ctr,
+                    "avg_cpc": row.metrics.average_cpc / 1_000_000,
+                    "cost": cost,
+                    "conversions": conversions,
+                    "conversion_value": row.metrics.conversions_value,
+                    "cost_per_conversion": cost / conversions if conversions > 0 else 0,
+                })
+
+    except GoogleAdsException as ex:
+        print(f"Device metrics failed: {ex.error.code().name}")
+        return []
+
+    return device_data
+
+
+def fetch_negative_keywords(client, customer_id):
+    """Fetch active negative keywords at campaign and ad group level for dedupe/state checks."""
+    ga_service = client.get_service("GoogleAdsService")
+    negative_keywords = []
+
+    campaign_query = """
+        SELECT
+            campaign.id,
+            campaign.name,
+            campaign.status,
+            campaign_criterion.resource_name,
+            campaign_criterion.criterion_id,
+            campaign_criterion.status,
+            campaign_criterion.keyword.text,
+            campaign_criterion.keyword.match_type
+        FROM campaign_criterion
+        WHERE campaign_criterion.type = 'KEYWORD'
+            AND campaign_criterion.negative = TRUE
+            AND campaign_criterion.status != 'REMOVED'
+    """
+
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=campaign_query)
+        for batch in response:
+            for row in batch.results:
+                negative_keywords.append({
+                    "level": "campaign",
+                    "campaign_id": row.campaign.id,
+                    "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
+                    "resource_name": row.campaign_criterion.resource_name,
+                    "criterion_id": row.campaign_criterion.criterion_id,
+                    "status": row.campaign_criterion.status.name,
+                    "keyword": row.campaign_criterion.keyword.text,
+                    "text": row.campaign_criterion.keyword.text,
+                    "match_type": row.campaign_criterion.keyword.match_type.name,
+                })
+    except GoogleAdsException as ex:
+        print(f"Campaign negative keyword fetch failed: {ex.error.code().name}")
+
+    ad_group_query = """
+        SELECT
+            campaign.id,
+            campaign.name,
+            campaign.status,
+            ad_group.id,
+            ad_group.name,
+            ad_group.status,
+            ad_group_criterion.resource_name,
+            ad_group_criterion.criterion_id,
+            ad_group_criterion.status,
+            ad_group_criterion.keyword.text,
+            ad_group_criterion.keyword.match_type
+        FROM ad_group_criterion
+        WHERE ad_group_criterion.type = 'KEYWORD'
+            AND ad_group_criterion.negative = TRUE
+            AND ad_group_criterion.status != 'REMOVED'
+    """
+
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=ad_group_query)
+        for batch in response:
+            for row in batch.results:
+                negative_keywords.append({
+                    "level": "ad_group",
+                    "campaign_id": row.campaign.id,
+                    "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
+                    "ad_group_id": row.ad_group.id,
+                    "ad_group_name": row.ad_group.name,
+                    "ad_group_status": row.ad_group.status.name,
+                    "resource_name": row.ad_group_criterion.resource_name,
+                    "criterion_id": row.ad_group_criterion.criterion_id,
+                    "status": row.ad_group_criterion.status.name,
+                    "keyword": row.ad_group_criterion.keyword.text,
+                    "text": row.ad_group_criterion.keyword.text,
+                    "match_type": row.ad_group_criterion.keyword.match_type.name,
+                })
+    except GoogleAdsException as ex:
+        print(f"Ad group negative keyword fetch failed: {ex.error.code().name}")
+
+    return negative_keywords
 
 
 def main():
@@ -736,6 +930,12 @@ def main():
     print("  - Fetching time-segmented performance...")
     time_performance = fetch_time_segmented_metrics(client, args.customer_id, args.start_date, args.end_date)
 
+    print("  - Fetching device-segmented performance...")
+    device_performance = fetch_device_metrics(client, args.customer_id, args.start_date, args.end_date)
+
+    print("  - Fetching negative keywords...")
+    negative_keywords = fetch_negative_keywords(client, args.customer_id)
+
     # Compile all data
     metrics_data = {
         "customer_id": args.customer_id,
@@ -748,6 +948,9 @@ def main():
         "search_queries": search_queries,
         "geo_performance": geo_performance,
         "time_performance": time_performance,
+        "device_performance": device_performance,
+        "negative_keywords": negative_keywords,
+        "google_negative_keywords": negative_keywords,
         "date_range": {
             "start_date": args.start_date,
             "end_date": args.end_date,
@@ -761,6 +964,8 @@ def main():
             "total_search_queries": len(search_queries),
             "total_geo_locations": len(geo_performance),
             "total_time_segments": len(time_performance),
+            "total_device_segments": len(device_performance),
+            "total_negative_keywords": len(negative_keywords),
             "total_campaign_daily_rows": len(campaign_daily),
             "total_impressions": sum(c["impressions"] for c in campaigns),
             "total_clicks": sum(c["clicks"] for c in campaigns),

@@ -452,6 +452,12 @@ ACTION_CONTRACTS = {
         "category": "geo",
         "manual_reason": "Geo bid adjustments are not automated yet.",
     },
+    "device_bid_adjustment": {
+        "automation": "manual",
+        "risk": "low",
+        "category": "device",
+        "manual_reason": "Device bid adjustments are not automated yet because they require campaign-level device bid-modifier support checks.",
+    },
     "creative_refresh": {
         "automation": "auto",
         "risk": "low",
