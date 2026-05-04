@@ -10,7 +10,7 @@ import { mockMetrics, mockRecommendations, mockCampaigns } from "@/lib/mock-data
 import { RefreshCcw } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { DateRangeSelection } from "@/lib/date-range";
+import { DateRangeSelection, normalizeDashboardDateRange } from "@/lib/date-range";
 import { fetchDashboardData, syncDashboard } from "@/lib/dashboard-refresh";
 
 function cn(...inputs: ClassValue[]) {
@@ -84,7 +84,7 @@ export default function Home() {
     setSyncing(true);
     setSyncWarning(null);
     const clientName = data.client_name;
-    const range = data.date_range as DateRangeSelection;
+    const range: DateRangeSelection = normalizeDashboardDateRange(data.date_range);
     try {
       const { data: fresh, warning } = await syncDashboard({
         clientName,
