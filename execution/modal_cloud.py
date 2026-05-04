@@ -434,6 +434,12 @@ ACTION_CONTRACTS = {
         "category": "waste",
         "manual_reason": "Pausing an entire Meta campaign is high impact and must be reviewed manually.",
     },
+    "campaign_action": {
+        "automation": "auto",
+        "risk": "low",
+        "category": "waste",
+        "manual_reason": "A campaign ID is required to pause or enable the campaign.",
+    },
     "geo_scaling": {
         "automation": "auto",
         "risk": "low",
@@ -557,6 +563,9 @@ def normalized_recommendation_key(item):
 def is_google_ad_group_criterion_resource(value):
     return bool(re.match(r"^customers/\d+/adGroupCriteria/\d+~\d+$", str(value or "")))
 
+def is_google_campaign_id(value):
+    return bool(str(value or "").strip().isdigit())
+
 def audience_segment_safe_for_automation(segment):
     segment_norm = normalize_match_value(segment)
     has_age = bool(re.search(r"\b\d{2}\s*-\s*\d{2}\b", str(segment or "")))
@@ -625,6 +634,9 @@ def has_required_automation_fields(action_type_norm, rec):
 
     if action_type_norm == "campaign_review":
         return bool(rec.get("campaign_id"))
+
+    if action_type_norm == "campaign_action":
+        return bool(rec.get("campaign_id")) and is_google_campaign_id(rec.get("campaign_id"))
 
     return False
 
@@ -1822,6 +1834,15 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
             elif action_type_norm == "bid_adjustment" and is_google_ad_group_criterion_resource(request.target_id) and request.suggested_bid:
                 execution_result = google_ads_executor.update_bid(customer_id, request.target_id, request.suggested_bid)
                 execution_status, response_status = google_execution_result("bid updated", execution_result)
+            elif action_type_norm == "campaign_action" and suggested_action_norm in {"paused", "pause"} and request.campaign_id:
+                execution_result = google_ads_executor.pause_campaign(customer_id, request.campaign_id)
+                execution_status, response_status = google_execution_result("campaign paused", execution_result)
+            elif action_type_norm == "campaign_action" and suggested_action_norm in {"enabled", "enable"} and request.campaign_id:
+                execution_result = google_ads_executor.enable_campaign(customer_id, request.campaign_id)
+                execution_status, response_status = google_execution_result("campaign enabled", execution_result)
+            elif action_type_norm == "budget_adjustment" and request.campaign_id and request.suggested_bid and not request.adset_id:
+                execution_result = google_ads_executor.update_campaign_budget(customer_id, request.campaign_id, request.suggested_bid)
+                execution_status, response_status = google_execution_result("campaign budget updated", execution_result)
             else:
                 execution_status = "Manual: unsupported or incomplete Google action"
                 response_status = "manual_required"
@@ -2133,6 +2154,7 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
         data['account_name'] = client_data.get('account_name') or client_data.get('description') or client_name
         data['customer_id'] = client_data.get('customer_id')
         data['facebook_ad_account_id'] = client_data.get('facebook_ad_account_id')
+        data['fetched_at'] = google_data.get('fetched_at')
 
         filtered_from_daily = False
         if requested_range:

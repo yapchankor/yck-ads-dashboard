@@ -126,4 +126,5 @@ export type DashboardData = {
     google?: { days?: number; start_date: string; end_date: string } | null;
     meta?: { days?: number; start_date: string; end_date: string } | null;
   } | null;
+  fetched_at?: string | null;
 };

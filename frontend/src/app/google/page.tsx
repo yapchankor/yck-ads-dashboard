@@ -492,24 +492,78 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {budgetPacing.days_in_period && (
-          <SectionCard title="Budget Pacing" description="Spend rate and projected monthly spend from the selected Google Ads period.">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
-              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Daily Avg Spend</p>
-                <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(budgetPacing.daily_avg_spend || 0)}</p>
+        {budgetPacing.days_in_period && (() => {
+          const activeBudgetTotal = googleCampaigns
+            .filter((c: any) => ["active", "enabled"].includes(String(c.status || "").toLowerCase()))
+            .reduce((sum: number, c: any) => sum + (Number(c.daily_budget) || 0), 0);
+          const monthlyBudgetTarget = activeBudgetTotal * 30;
+          const projectedMonthly = budgetPacing.projected_monthly_spend || 0;
+          const hasBudgetTarget = monthlyBudgetTarget > 0;
+          const variancePct = hasBudgetTarget ? ((projectedMonthly - monthlyBudgetTarget) / monthlyBudgetTarget) * 100 : 0;
+          const absVariance = Math.abs(variancePct);
+          const overBudget = variancePct > 0;
+
+          const pacingColor = !hasBudgetTarget
+            ? { tile: "border-border/60 bg-surface-hover", badge: "bg-slate-100 text-slate-600", label: "" }
+            : absVariance <= 10
+            ? { tile: "border-emerald-200 bg-emerald-50", badge: "bg-emerald-100 text-emerald-700", label: "On track" }
+            : absVariance <= 25
+            ? { tile: "border-amber-200 bg-amber-50", badge: "bg-amber-100 text-amber-700", label: overBudget ? "Overpacing" : "Underpacing" }
+            : { tile: "border-red-200 bg-red-50", badge: "bg-red-100 text-red-700", label: overBudget ? "Critical overspend" : "Critical underspend" };
+
+          const recommendedAction = !hasBudgetTarget
+            ? null
+            : absVariance <= 10
+            ? "Hold course"
+            : overBudget && absVariance <= 25
+            ? "Reduce bids or pause low performers"
+            : overBudget
+            ? "Urgently reduce daily spend"
+            : absVariance <= 25
+            ? "Scale up top performers"
+            : "Increase bids or expand keywords";
+
+          return (
+            <SectionCard title="Budget Pacing" description="Spend rate, monthly projection, and pacing vs. campaign budgets.">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 p-4">
+                <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Daily Avg Spend</p>
+                  <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(budgetPacing.daily_avg_spend || 0)}</p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Projected Monthly</p>
+                  <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(projectedMonthly)}</p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Days Analysed</p>
+                  <p className="mt-1 text-xl font-bold text-foreground">{fmt(budgetPacing.days_in_period || 0)}</p>
+                </div>
+                {hasBudgetTarget && (
+                  <>
+                    <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Monthly Budget</p>
+                      <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(monthlyBudgetTarget)}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">From active campaign budgets</p>
+                    </div>
+                    <div className={`rounded-xl border p-4 ${pacingColor.tile}`}>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Pacing Variance</p>
+                      <p className={`mt-1 text-xl font-bold ${absVariance <= 10 ? "text-emerald-700" : absVariance <= 25 ? "text-amber-700" : "text-red-700"}`}>
+                        {overBudget ? "+" : ""}{variancePct.toFixed(1)}%
+                      </p>
+                      <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${pacingColor.badge}`}>
+                        {pacingColor.label}
+                      </span>
+                    </div>
+                    <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Recommended Action</p>
+                      <p className="mt-1 text-sm font-semibold text-foreground leading-tight">{recommendedAction}</p>
+                    </div>
+                  </>
+                )}
               </div>
-              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Projected Monthly</p>
-                <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(budgetPacing.projected_monthly_spend || 0)}</p>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Days Analysed</p>
-                <p className="mt-1 text-xl font-bold text-foreground">{fmt(budgetPacing.days_in_period || 0)}</p>
-              </div>
-            </div>
-          </SectionCard>
-        )}
+            </SectionCard>
+          );
+        })()}
 
         {(searchAnalysis.total_queries || searchWasteRows.length > 0 || negativeSuggestionRows.length > 0) && (
           <SectionCard title="Search Term Intelligence" description="Waste, intent gaps, and negative-keyword opportunities from actual user searches.">

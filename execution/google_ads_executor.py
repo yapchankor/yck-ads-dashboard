@@ -109,19 +109,86 @@ def update_bid(customer_id, criterion_resource_name, suggested_bid):
     """Execute updating a CPC bid for a criterion."""
     client = load_google_ads_client()
     agc_service = client.get_service("AdGroupCriterionService")
-    
+
     operation = client.get_type("AdGroupCriterionOperation")
     criterion = operation.update
     criterion.resource_name = criterion_resource_name
     bid_micros = round(suggested_bid * 1_000_000 / 10_000) * 10_000
     criterion.cpc_bid_micros = int(bid_micros)
     operation.update_mask.CopyFrom(field_mask_pb2.FieldMask(paths=["cpc_bid_micros"]))
-    
+
     try:
         response = agc_service.mutate_ad_group_criteria(
             customer_id=customer_id, operations=[operation]
         )
         return {"status": "success", "resource_name": response.results[0].resource_name}
+    except GoogleAdsException as ex:
+        return google_ads_error_response(ex)
+    except Exception as ex:
+        return unexpected_error_response(ex)
+
+def _set_campaign_status(customer_id, campaign_id, status_enum_name):
+    """Shared helper for pause_campaign / enable_campaign."""
+    client = load_google_ads_client()
+    campaign_service = client.get_service("CampaignService")
+
+    operation = client.get_type("CampaignOperation")
+    campaign = operation.update
+    campaign.resource_name = campaign_service.campaign_path(customer_id, campaign_id)
+    campaign.status = client.enums.CampaignStatusEnum[status_enum_name]
+    operation.update_mask.CopyFrom(field_mask_pb2.FieldMask(paths=["status"]))
+
+    try:
+        response = campaign_service.mutate_campaigns(
+            customer_id=customer_id, operations=[operation]
+        )
+        return {"status": "success", "resource_name": response.results[0].resource_name}
+    except GoogleAdsException as ex:
+        return google_ads_error_response(ex)
+    except Exception as ex:
+        return unexpected_error_response(ex)
+
+def pause_campaign(customer_id, campaign_id):
+    """Pause a Google Ads campaign."""
+    return _set_campaign_status(customer_id, campaign_id, "PAUSED")
+
+def enable_campaign(customer_id, campaign_id):
+    """Enable (un-pause) a Google Ads campaign."""
+    return _set_campaign_status(customer_id, campaign_id, "ENABLED")
+
+def update_campaign_budget(customer_id, campaign_id, new_daily_budget):
+    """Update the daily budget for a campaign by looking up its current budget resource."""
+    client = load_google_ads_client()
+    ga_service = client.get_service("GoogleAdsService")
+
+    query = f"""
+        SELECT campaign_budget.resource_name
+        FROM campaign
+        WHERE campaign.id = {campaign_id}
+        LIMIT 1
+    """
+
+    try:
+        response = ga_service.search(customer_id=customer_id, query=query)
+        budget_resource_name = None
+        for row in response:
+            budget_resource_name = row.campaign_budget.resource_name
+            break
+
+        if not budget_resource_name:
+            return {"status": "error", "message": f"No budget found for campaign {campaign_id}"}
+
+        budget_service = client.get_service("CampaignBudgetService")
+        budget_operation = client.get_type("CampaignBudgetOperation")
+        budget = budget_operation.update
+        budget.resource_name = budget_resource_name
+        budget.amount_micros = int(round(new_daily_budget * 1_000_000 / 10_000) * 10_000)
+        budget_operation.update_mask.CopyFrom(field_mask_pb2.FieldMask(paths=["amount_micros"]))
+
+        budget_response = budget_service.mutate_campaign_budgets(
+            customer_id=customer_id, operations=[budget_operation]
+        )
+        return {"status": "success", "resource_name": budget_response.results[0].resource_name}
     except GoogleAdsException as ex:
         return google_ads_error_response(ex)
     except Exception as ex:

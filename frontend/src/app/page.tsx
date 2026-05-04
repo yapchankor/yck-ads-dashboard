@@ -11,7 +11,7 @@ import { RefreshCcw } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { DateRangeSelection } from "@/lib/date-range";
-import { fetchDashboardData } from "@/lib/dashboard-refresh";
+import { fetchDashboardData, syncDashboard } from "@/lib/dashboard-refresh";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -21,6 +21,8 @@ export default function Home() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshingRange, setRefreshingRange] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [platformFilter, setPlatformFilter] = useState<"All" | "Google" | "Meta">("All");
@@ -74,6 +76,27 @@ export default function Home() {
       );
     } finally {
       setRefreshingRange(false);
+    }
+  }
+
+  async function handleSync() {
+    if (!data || syncing) return;
+    setSyncing(true);
+    setSyncWarning(null);
+    const clientName = data.client_name;
+    const range = data.date_range as DateRangeSelection;
+    try {
+      const { data: fresh, warning } = await syncDashboard({
+        clientName,
+        range,
+        onData: (d) => setData({ ...d, isLive: true }),
+      });
+      setData({ ...fresh, isLive: true });
+      if (warning) setSyncWarning(warning);
+    } catch {
+      setSyncWarning("Sync could not complete. Try again in a minute.");
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -194,6 +217,22 @@ export default function Home() {
           
           {/* Controls */}
           <div className="flex items-center gap-3">
+            {/* Sync Now */}
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold border transition-colors",
+                syncing
+                  ? "bg-accent-lime/20 text-accent-primary border-accent-lime/50 cursor-not-allowed"
+                  : "bg-surface border-border/60 text-text-muted hover:text-foreground hover:border-border shadow-sm"
+              )}
+              title="Pull fresh data from Google Ads and Meta APIs"
+            >
+              <RefreshCcw className={cn("w-4 h-4", syncing && "animate-spin")} />
+              {syncing ? "Syncing…" : "Sync Now"}
+            </button>
+
             {/* Date Picker */}
             <DatePicker
               currentRange={data.date_range}
@@ -222,6 +261,11 @@ export default function Home() {
         </div>
 
         {/* Unified Metrics (Emitly Style) */}
+        {syncWarning && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+            {syncWarning}
+          </div>
+        )}
         {refreshError && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
             {refreshError}

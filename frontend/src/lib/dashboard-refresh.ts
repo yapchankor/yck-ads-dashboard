@@ -158,3 +158,48 @@ export async function refreshDashboardRange({
   await triggerDashboardRefresh({ range, clientName });
   return pollDashboardRange({ range, clientName, attempts, intervalMs });
 }
+
+type SyncOptions = {
+  clientName?: string | null;
+  range: DateRangeSelection;
+  onData?: (data: any) => void;
+  maxWaitMs?: number;
+  pollIntervalMs?: number;
+};
+
+export async function syncDashboard({
+  clientName,
+  range,
+  onData,
+  maxWaitMs = 300_000,
+  pollIntervalMs = 10_000,
+}: SyncOptions): Promise<{ data: any; warning?: string }> {
+  const baseline = await fetchDashboardData(clientName, range);
+  const baselineFetchedAt = baseline?.fetched_at ?? null;
+
+  await triggerDashboardRefresh({ range, clientName });
+
+  await sleep(15_000);
+
+  const maxAttempts = Math.floor((maxWaitMs - 15_000) / pollIntervalMs);
+
+  for (let i = 0; i < maxAttempts; i++) {
+    if (i > 0) await sleep(pollIntervalMs);
+    let data: any;
+    try {
+      data = await fetchDashboardData(clientName, range);
+    } catch {
+      continue;
+    }
+    onData?.(data);
+    if (data?.fetched_at && data.fetched_at !== baselineFetchedAt) {
+      return { data };
+    }
+  }
+
+  const latest = await fetchDashboardData(clientName, range);
+  return {
+    data: latest,
+    warning: "Sync is still running — showing the latest available data. Check back in a minute.",
+  };
+}
