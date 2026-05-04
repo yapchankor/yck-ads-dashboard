@@ -87,6 +87,19 @@ export type Recommendation = {
     confidence_inputs?: Record<string, unknown>;
   };
   automation_allowed?: boolean;
+  impact_data?: {
+    monthly_savings?: number;
+    additional_conversions_monthly?: number;
+    additional_revenue_monthly?: number;
+    additional_spend_monthly?: number;
+    net_benefit_monthly?: number;
+    confidence_pct?: number;
+    confidence?: string;
+  };
+  automation?: {
+    is_automatable?: boolean;
+    manual_reason?: string;
+  };
 };
 
 export type DashboardMetrics = {
