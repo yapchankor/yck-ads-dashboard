@@ -72,58 +72,45 @@ function removeTrackedRecommendations(recommendations: Recommendation[], tracked
   ));
 }
 
-// ── Impact parsing helpers ──────────────────────────────────────────────────
+// ── Impact helpers ──────────────────────────────────────────────────────────
 
 function parseImpactSavings(text: string): number {
+  // Only match "Save RM X" or "Save MYR X" — reliable pattern from pause/negative-keyword/bid-reduce recs
   const match = text.match(/[Ss]ave\s+(?:RM|MYR)\s*([\d,.]+)/);
   return match ? parseFloat(match[1].replace(/,/g, "")) : 0;
 }
 
-function parseImpactConversions(text: string): number {
-  const match = text.match(/\+\s*([\d.]+)\s*conversions?/i);
-  return match ? parseFloat(match[1]) : 0;
-}
-
-function parseImpactRevenue(text: string): number {
-  const match = text.match(/\+\s*(?:RM|MYR)\s*([\d,.]+)\s*revenue/i);
-  return match ? parseFloat(match[1].replace(/,/g, "")) : 0;
-}
-
 type PlatformImpact = {
-  monthlySavings: number;
-  additionalConversions: number;
-  additionalRevenue: number;
-  netMonthlyBenefit: number;
   autoCount: number;
   manualCount: number;
+  highCount: number;
+  mediumCount: number;
+  lowCount: number;
+  monthlySavings: number;
 };
 
 function computePlatformImpact(recs: Recommendation[]): PlatformImpact {
-  let monthlySavings = 0;
-  let additionalConversions = 0;
-  let additionalRevenue = 0;
   let autoCount = 0;
   let manualCount = 0;
+  let highCount = 0;
+  let mediumCount = 0;
+  let lowCount = 0;
+  let monthlySavings = 0;
 
   for (const rec of recs) {
     const text = rec.expectedImpact || rec.expected_impact || "";
     monthlySavings += parseImpactSavings(text);
-    additionalConversions += parseImpactConversions(text);
-    additionalRevenue += parseImpactRevenue(text);
 
     const canAutoApply = rec.automation_allowed === true && rec.guardrail_status === "eligible" && !rec.isManualOnly;
     if (canAutoApply) autoCount++;
     else manualCount++;
+
+    if (rec.impact === "High") highCount++;
+    else if (rec.impact === "Medium") mediumCount++;
+    else lowCount++;
   }
 
-  return {
-    monthlySavings: Math.round(monthlySavings),
-    additionalConversions: Math.round(additionalConversions * 10) / 10,
-    additionalRevenue: Math.round(additionalRevenue),
-    netMonthlyBenefit: Math.round(monthlySavings + additionalRevenue),
-    autoCount,
-    manualCount,
-  };
+  return { autoCount, manualCount, highCount, mediumCount, lowCount, monthlySavings: Math.round(monthlySavings) };
 }
 
 // ── Platform icons ──────────────────────────────────────────────────────────
@@ -147,24 +134,37 @@ const MetaIcon = () => (
 
 function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCount: number }) {
   const items = [
-    { label: "Monthly Savings", value: `RM ${impact.monthlySavings.toLocaleString()}`, sub: "From eliminating waste" },
-    { label: "Additional Conversions", value: impact.additionalConversions.toLocaleString(), sub: "Monthly projection" },
-    { label: "Additional Revenue", value: `RM ${impact.additionalRevenue.toLocaleString()}`, sub: "From scaling winners" },
-    { label: "Net Monthly Benefit", value: `RM ${impact.netMonthlyBenefit.toLocaleString()}`, sub: "Total value unlock" },
+    {
+      label: "Auto-actionable",
+      value: String(impact.autoCount),
+      sub: `${recCount > 0 ? Math.round((impact.autoCount / recCount) * 100) : 0}% of recommendations`,
+    },
+    {
+      label: "Manual Required",
+      value: String(impact.manualCount),
+      sub: "Needs your input",
+    },
+    {
+      label: "High Impact",
+      value: String(impact.highCount),
+      sub: `${impact.mediumCount} medium · ${impact.lowCount} low`,
+    },
+    {
+      label: "Est. Monthly Savings",
+      value: impact.monthlySavings > 0 ? `RM ${impact.monthlySavings.toLocaleString()}` : "—",
+      sub: impact.monthlySavings > 0 ? "From waste elimination" : "See individual cards",
+    },
   ];
 
   return (
     <div className="bg-gradient-to-br from-indigo-600 to-purple-700 text-white rounded-2xl p-5 mb-5">
       <div className="flex items-start justify-between flex-wrap gap-2 border-b border-white/20 pb-3 mb-4">
         <div>
-          <h3 className="text-sm font-bold text-white">Total Expected Impact</h3>
+          <h3 className="text-sm font-bold text-white">Recommendation Summary</h3>
           <p className="text-xs text-white/75 mt-0.5">
-            {recCount} recommendation{recCount !== 1 ? "s" : ""} · moderate confidence (70%)
+            {recCount} recommendation{recCount !== 1 ? "s" : ""} · apply all for maximum impact
           </p>
         </div>
-        <p className="text-xs text-white/80 bg-white/10 rounded-lg px-3 py-1.5 font-medium">
-          {impact.autoCount} auto-actionable · {impact.manualCount} manual required
-        </p>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {items.map((item) => (
