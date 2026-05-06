@@ -153,6 +153,60 @@ function InsightCard({ insight }: { insight: { type: string; title: string; desc
   );
 }
 
+function CreativeCard({ ad }: { ad: any }) {
+  const hasFatigue = Number(ad.frequency) >= 3.5;
+  const spend = Number(ad.spend ?? 0);
+  const conv = Number(ad.conversions ?? 0);
+  const explicitCpa = Number(ad.cost_per_conversion ?? ad.cpa ?? 0);
+  const derivedCpa = explicitCpa > 0 ? explicitCpa : conv > 0 ? spend / conv : 0;
+  const adName = ad.ad_name || ad.name || "Untitled Ad";
+
+  return (
+    <div className="border border-border/60 rounded-xl overflow-hidden hover:shadow-sm transition-shadow flex flex-col">
+      {ad.image_url ? (
+        <div className="relative aspect-video bg-surface-hover overflow-hidden">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={ad.image_url} alt={adName} className="w-full h-full object-cover" />
+          {hasFatigue && (
+            <span className="absolute top-2 right-2 bg-amber-500 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full">Fatigue</span>
+          )}
+        </div>
+      ) : (
+        <div className="relative aspect-video bg-surface-hover flex items-center justify-center">
+          <span className="text-[10px] text-text-muted font-medium">No image</span>
+          {hasFatigue && (
+            <span className="absolute top-2 right-2 bg-amber-500 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full">Fatigue</span>
+          )}
+        </div>
+      )}
+      <div className="p-3 flex flex-col gap-2 flex-1">
+        <p className="text-xs font-bold text-foreground line-clamp-1">{adName}</p>
+        {ad.headline && <p className="text-xs font-semibold text-foreground line-clamp-1">{ad.headline}</p>}
+        {ad.body && <p className="text-[11px] text-text-muted leading-relaxed line-clamp-2">{ad.body}</p>}
+        {ad.cta && (
+          <span className="self-start bg-surface-hover border border-border/60 text-[10px] font-bold px-2 py-0.5 rounded">{ad.cta}</span>
+        )}
+        <div className="mt-auto pt-2 border-t border-border/40 grid grid-cols-3 gap-1 text-center">
+          <div>
+            <p className="text-[9px] text-text-muted uppercase font-semibold">Spend</p>
+            <p className="text-xs font-bold text-foreground">{fmtMYR(spend)}</p>
+          </div>
+          <div>
+            <p className="text-[9px] text-text-muted uppercase font-semibold">CPA</p>
+            <p className="text-xs font-bold text-foreground">{derivedCpa > 0 ? fmtMYR(derivedCpa) : "—"}</p>
+          </div>
+          <div>
+            <p className="text-[9px] text-text-muted uppercase font-semibold">Freq</p>
+            <p className={`text-xs font-bold ${hasFatigue ? "text-amber-600" : "text-foreground"}`}>
+              {Number(ad.frequency) > 0 ? Number(ad.frequency).toFixed(1) : "—"}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function buildMetaInsights({
   campaigns,
   placements,
@@ -346,6 +400,9 @@ export default function MetaAdsPage() {
   const daily: any[] = timePerf.daily || [];
   const dayOfWeekRows = buildDayOfWeekRows(daily);
   const recommendations: any[] = (d.recommendations || []).filter((r: any) => r.platform === "Meta");
+  const ads: any[] = (d.ads || [])
+    .filter((a: any) => (a.spend || 0) > 0)
+    .sort((a: any, b: any) => (b.spend || 0) - (a.spend || 0));
 
   // Derived summary from Meta campaigns only
   const metaSpend = metaCampaigns.reduce((s: number, c: any) => s + (c.spend || 0), 0);
@@ -532,6 +589,17 @@ export default function MetaAdsPage() {
             rows={metaCampaigns}
           />
         </SectionCard>
+
+        {/* ── Creative Performance ── */}
+        {ads.length > 0 && (
+          <SectionCard title="Creative Performance" description="Ad-level creative performance sorted by spend. Fatigue risk shown when frequency ≥ 3.5.">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
+              {ads.map((ad: any, i: number) => (
+                <CreativeCard key={ad.ad_id || i} ad={ad} />
+              ))}
+            </div>
+          </SectionCard>
+        )}
 
         {/* ── Ad Set Performance ── */}
         {adSets.length > 0 && (

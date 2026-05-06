@@ -2,7 +2,7 @@
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import React, { useEffect, useState } from "react";
-import { TrendingUp, Clock, CheckCircle2, AlertCircle, Zap, Target, Trash2, Wrench } from "lucide-react";
+import { TrendingUp, Clock, CheckCircle2, AlertCircle, Zap, Target, Trash2, Wrench, History } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -30,6 +30,9 @@ interface TrackedItem {
   quality_label?: string;
   confidence_score?: number;
   expected_impact?: string;
+  current_bid?: number;
+  suggested_bid?: number;
+  current_budget?: number;
   evidence_snapshot?: {
     spend?: number | null;
     clicks?: number | null;
@@ -44,10 +47,32 @@ interface TrackedItem {
   };
 }
 
+type TabId = "outcome" | "changelog";
+type PlatformFilter = "All" | "Google" | "Meta";
+type StatusFilter = "All" | "Applied" | "Manual" | "Dismissed" | "Error";
+
+function formatActionType(s: string): string {
+  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function getBeforeAfter(item: TrackedItem): string {
+  if (item.action_type === "bid_adjustment" && item.current_bid != null) {
+    const after = item.suggested_bid != null ? `RM ${item.suggested_bid.toFixed(2)}` : "—";
+    return `RM ${item.current_bid.toFixed(2)} → ${after}`;
+  }
+  if (item.action_type === "budget_adjustment" && item.current_budget != null) {
+    return `RM ${item.current_budget.toFixed(2)} → —`;
+  }
+  return "—";
+}
+
 export default function TrackingPage() {
   const [trackedItems, setTrackedItems] = useState<TrackedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>("outcome");
+  const [clPlatform, setClPlatform] = useState<PlatformFilter>("All");
+  const [clStatus, setClStatus] = useState<StatusFilter>("All");
 
   useEffect(() => {
     async function fetchTracking() {
@@ -82,12 +107,6 @@ export default function TrackingPage() {
     );
   }
 
-  // Summary Calculations
-  const totalImplemented = trackedItems.length;
-  const highImpactCount = trackedItems.filter(i => i.impact === "High").length;
-  const googleCount = trackedItems.filter(i => i.platform === "Google").length;
-  const metaCount = trackedItems.filter(i => i.platform === "Meta").length;
-
   if (error) {
     return (
       <DashboardLayout>
@@ -108,262 +127,538 @@ export default function TrackingPage() {
     );
   }
 
+  // Outcome Tracking summary
+  const totalImplemented = trackedItems.length;
+  const highImpactCount = trackedItems.filter((i) => i.impact === "High").length;
+  const googleCount = trackedItems.filter((i) => i.platform === "Google").length;
+  const metaCount = trackedItems.filter((i) => i.platform === "Meta").length;
+
+  // Change Log derived data
+  const clAutoApplied = trackedItems.filter((i) =>
+    i.execution_status?.toLowerCase().startsWith("applied")
+  ).length;
+  const clManual = trackedItems.filter((i) =>
+    i.execution_status?.includes("Manual")
+  ).length;
+  const clErrors = trackedItems.filter(
+    (i) => i.execution_status?.includes("Error") || i.status === "Failed"
+  ).length;
+
+  const filteredChangelog = trackedItems
+    .filter((item) => clPlatform === "All" || item.platform === clPlatform)
+    .filter((item) => {
+      if (clStatus === "All") return true;
+      if (clStatus === "Applied") return !!item.execution_status?.toLowerCase().startsWith("applied");
+      if (clStatus === "Manual") return !!item.execution_status?.includes("Manual");
+      if (clStatus === "Dismissed") return item.status === "Dismissed";
+      if (clStatus === "Error")
+        return !!item.execution_status?.includes("Error") || item.status === "Failed";
+      return true;
+    })
+    .sort((a, b) => new Date(b.applied_at).getTime() - new Date(a.applied_at).getTime());
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-8 pb-10">
-        
+
         {/* Header */}
         <div className="mt-2">
-          <h1 className="text-3xl font-bold text-foreground tracking-tight">Outcome Tracking</h1>
+          <h1 className="text-3xl font-bold text-foreground tracking-tight">Tracking</h1>
           <p className="text-sm font-medium text-text-muted mt-1">
-            Measuring the real-world impact of your AI-driven optimizations.
+            Monitor outcomes and review every change made by AdsPulse.
           </p>
         </div>
 
-        {/* Summary Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-accent-lime/20 rounded-lg text-accent-primary">
-                <CheckCircle2 className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Total Actions</p>
-            </div>
-            <p className="text-2xl font-black text-foreground">{totalImplemented}</p>
-            <p className="text-[10px] text-text-muted mt-1 font-medium">Applied & Tracking</p>
-          </div>
-
-          <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-amber-100 rounded-lg text-amber-600">
-                <Zap className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">High Impact</p>
-            </div>
-            <p className="text-2xl font-black text-foreground">{highImpactCount}</p>
-            <p className="text-[10px] text-text-muted mt-1 font-medium">Critical optimizations</p>
-          </div>
-
-          <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
-                <Target className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Google Ads</p>
-            </div>
-            <p className="text-2xl font-black text-foreground">{googleCount}</p>
-            <p className="text-[10px] text-text-muted mt-1 font-medium">Keywords & Bids</p>
-          </div>
-
-          <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-purple-100 rounded-lg text-purple-600">
-                <TrendingUp className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Meta Ads</p>
-            </div>
-            <p className="text-2xl font-black text-foreground">{metaCount}</p>
-            <p className="text-[10px] text-text-muted mt-1 font-medium">Creative & Audience</p>
-          </div>
+        {/* Tab Toggle */}
+        <div className="flex items-center gap-1 bg-surface-hover/50 border border-border/40 rounded-xl p-1 w-fit">
+          <button
+            onClick={() => setActiveTab("outcome")}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all",
+              activeTab === "outcome"
+                ? "bg-surface text-foreground shadow-sm"
+                : "text-text-muted hover:text-foreground"
+            )}
+          >
+            <TrendingUp className="w-4 h-4" />
+            Outcome Tracking
+          </button>
+          <button
+            onClick={() => setActiveTab("changelog")}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all",
+              activeTab === "changelog"
+                ? "bg-surface text-foreground shadow-sm"
+                : "text-text-muted hover:text-foreground"
+            )}
+          >
+            <History className="w-4 h-4" />
+            Change Log
+          </button>
         </div>
 
-        {/* Tracking Table */}
-        <div className="bg-surface border border-border/40 rounded-3xl overflow-hidden shadow-sm">
-          <div className="px-6 py-5 border-b border-border/40 flex items-center justify-between">
-            <h2 className="text-base font-bold text-foreground">Implementation History</h2>
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1.5 bg-accent-lime/10 text-accent-primary px-3 py-1 rounded-full text-[10px] font-bold uppercase border border-accent-lime/20">
-                <div className="w-1.5 h-1.5 rounded-full bg-accent-lime animate-pulse" />
-                Live Monitoring
+        {/* ── OUTCOME TRACKING TAB ── */}
+        {activeTab === "outcome" && (
+          <>
+            {/* Summary Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-accent-lime/20 rounded-lg text-accent-primary">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Total Actions</p>
+                </div>
+                <p className="text-2xl font-black text-foreground">{totalImplemented}</p>
+                <p className="text-[10px] text-text-muted mt-1 font-medium">Applied & Tracking</p>
+              </div>
+
+              <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-amber-100 rounded-lg text-amber-600">
+                    <Zap className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-text-muted uppercase tracking-wider">High Impact</p>
+                </div>
+                <p className="text-2xl font-black text-foreground">{highImpactCount}</p>
+                <p className="text-[10px] text-text-muted mt-1 font-medium">Critical optimizations</p>
+              </div>
+
+              <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                    <Target className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Google Ads</p>
+                </div>
+                <p className="text-2xl font-black text-foreground">{googleCount}</p>
+                <p className="text-[10px] text-text-muted mt-1 font-medium">Keywords & Bids</p>
+              </div>
+
+              <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-purple-100 rounded-lg text-purple-600">
+                    <TrendingUp className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Meta Ads</p>
+                </div>
+                <p className="text-2xl font-black text-foreground">{metaCount}</p>
+                <p className="text-[10px] text-text-muted mt-1 font-medium">Creative & Audience</p>
+              </div>
+            </div>
+
+            {/* Tracking Table */}
+            <div className="bg-surface border border-border/40 rounded-3xl overflow-hidden shadow-sm">
+              <div className="px-6 py-5 border-b border-border/40 flex items-center justify-between">
+                <h2 className="text-base font-bold text-foreground">Implementation History</h2>
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1.5 bg-accent-lime/10 text-accent-primary px-3 py-1 rounded-full text-[10px] font-bold uppercase border border-accent-lime/20">
+                    <div className="w-1.5 h-1.5 rounded-full bg-accent-lime animate-pulse" />
+                    Live Monitoring
+                  </span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-surface-hover/50">
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Platform</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Recommendation</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Applied Date</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Expected Outcome</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Status</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Outcome</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {trackedItems.map((item) => (
+                      <tr key={item.recommendation_id} className="hover:bg-surface-hover/30 transition-colors group">
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "px-2 py-1 rounded text-[10px] font-bold uppercase",
+                            item.platform === "Google" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700"
+                          )}>
+                            {item.platform}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 max-w-md">
+                          <p className="text-sm font-bold text-foreground line-clamp-1">{item.title || item.suggested_action || "Manual Adjustment"}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <p className="text-[10px] text-text-muted">{item.action_type}</p>
+                            {item.quality_label && (
+                              <span className="rounded-full border border-border/50 bg-surface-hover px-2 py-0.5 text-[9px] font-bold uppercase text-text-muted">
+                                {item.quality_label}
+                                {typeof item.confidence_score === "number" ? ` ${Math.round(item.confidence_score)}%` : ""}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-3.5 h-3.5 text-text-muted" />
+                            <span className="text-xs font-medium text-text-muted">
+                              {new Date(item.applied_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2">
+                              <TrendingUp className="w-3.5 h-3.5 text-green-600" />
+                              <span className="text-xs font-bold text-green-700">{item.expected_impact || item.baseline_metrics.expected_outcome || "TBD"}</span>
+                            </div>
+                            {item.evidence_snapshot && (
+                              <p className="text-[10px] text-text-muted">
+                                Baseline: {typeof item.evidence_snapshot.spend === "number" ? `RM ${item.evidence_snapshot.spend.toFixed(2)}` : "spend n/a"}
+                                {typeof item.evidence_snapshot.conversions === "number" ? `, ${item.evidence_snapshot.conversions} conv.` : ""}
+                                {typeof item.evidence_snapshot.cpa === "number" ? `, RM ${item.evidence_snapshot.cpa.toFixed(2)} CPA` : ""}
+                              </p>
+                            )}
+                            {item.execution_status && (
+                              <div className={cn(
+                                "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter w-fit",
+                                item.execution_status.toLowerCase().startsWith("applied") ? "bg-green-50 text-green-700 border border-green-200" :
+                                item.execution_status.includes("Manual") ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                                item.execution_status.includes("Error") ? "bg-red-50 text-red-700 border border-red-200" :
+                                "bg-gray-50 text-gray-700 border border-gray-200"
+                              )}>
+                                {item.execution_status.toLowerCase().startsWith("applied") ? <CheckCircle2 className="w-2.5 h-2.5" /> :
+                                 item.execution_status.includes("Manual") ? <Wrench className="w-2.5 h-2.5" /> :
+                                 <AlertCircle className="w-2.5 h-2.5" />}
+                                {item.execution_status}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter border",
+                            item.status === "Failed" ? "bg-red-50 text-red-700 border-red-200" :
+                            item.status === "Dismissed" ? "bg-gray-50 text-gray-600 border-gray-200" :
+                            item.status === "Needs data" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                            item.status === "Completed" ? "bg-green-50 text-green-700 border-green-200" :
+                            "bg-accent-lime/10 text-accent-primary border-accent-lime/20"
+                          )}>
+                            {item.status === "Dismissed" || item.status === "Failed" || item.status === "Completed" || item.status === "Needs data"
+                              ? item.status
+                              : `Day ${item.days_active} / 30`
+                            }
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center justify-between group">
+                            {item.status === "Dismissed" ? (
+                              <span className="text-[10px] font-bold text-text-muted uppercase">Removed from queue</span>
+                            ) : item.status === "Failed" ? (
+                              <span className="text-[10px] font-bold text-red-600 uppercase">Action failed</span>
+                            ) : item.snapshots?.day_30?.summary ? (
+                              <span className="text-xs font-bold text-green-700">{item.snapshots.day_30.summary}</span>
+                            ) : item.snapshots?.day_14?.summary ? (
+                              <span className="text-xs font-bold text-green-700">{item.snapshots.day_14.summary}</span>
+                            ) : item.snapshots?.day_7?.summary ? (
+                              <span className="text-xs font-bold text-green-700">{item.snapshots.day_7.summary}</span>
+                            ) : item.days_active < 7 ? (
+                              <div className="flex items-center gap-2">
+                                <div className="h-1.5 w-16 bg-border/40 rounded-full overflow-hidden">
+                                  <div className="h-full bg-accent-lime animate-shimmer" style={{ width: "30%" }} />
+                                </div>
+                                <span className="text-[10px] font-bold text-text-muted uppercase">Collecting Data</span>
+                              </div>
+                            ) : (
+                              <span className="text-[10px] font-bold text-text-muted uppercase">Awaiting milestone snapshot</span>
+                            )}
+
+                            <button
+                              onClick={async () => {
+                                if (confirm("Remove this item from tracking?")) {
+                                  const res = await fetch(
+                                    `/api/tracking?recommendation_id=${encodeURIComponent(item.recommendation_id)}&client_name=${encodeURIComponent(item.client_name)}`,
+                                    { method: "DELETE" }
+                                  );
+                                  if (res.ok) {
+                                    setTrackedItems((prev) =>
+                                      prev.filter((i) => i.recommendation_id !== item.recommendation_id)
+                                    );
+                                  }
+                                }
+                              }}
+                              className="p-2 text-text-muted hover:text-red-500 transition-colors rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
+                              title="Delete from history"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+
+                    {trackedItems.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-20 text-center">
+                          <div className="flex flex-col items-center gap-3 opacity-40">
+                            <AlertCircle className="w-10 h-10 text-text-muted" />
+                            <p className="text-sm font-medium text-text-muted max-w-xs">
+                              No implementations recorded yet. Apply your first recommendation to start tracking results.
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Legend / Info */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-accent-primary/5 border border-accent-primary/10 p-6 rounded-3xl">
+                <h3 className="text-sm font-bold text-accent-primary flex items-center gap-2 mb-3">
+                  <TrendingUp className="w-4 h-4" /> How Tracking Works
+                </h3>
+                <ul className="space-y-3">
+                  <li className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">1</div>
+                    <p className="text-xs text-text-muted leading-relaxed">
+                      <strong className="text-foreground">Snapshot</strong>: We capture the baseline CPA, spend, and conversion volume the moment you apply a change.
+                    </p>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">2</div>
+                    <p className="text-xs text-text-muted leading-relaxed">
+                      <strong className="text-foreground">7-Day Burn</strong>: Advertising algorithms take up to 7 days to stabilize. We display &ldquo;Collecting Data&rdquo; during this period.
+                    </p>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">3</div>
+                    <p className="text-xs text-text-muted leading-relaxed">
+                      <strong className="text-foreground">Validation</strong>: Performance is compared against the previous 30-day average to calculate the final uplift.
+                    </p>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="flex flex-col justify-center items-center p-8 bg-surface border border-border/40 rounded-3xl text-center">
+                <div className="w-12 h-12 bg-accent-lime/20 rounded-2xl flex items-center justify-center mb-4">
+                  <Zap className="w-6 h-6 text-accent-primary" />
+                </div>
+                <h3 className="text-base font-bold text-foreground mb-2">Continuous Optimization</h3>
+                <p className="text-xs text-text-muted max-w-sm leading-relaxed">
+                  YCK Ads Dashboard uses these historical outcomes to improve its AI impact projections over time, making every recommendation more accurate than the last.
+                </p>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── CHANGE LOG TAB ── */}
+        {activeTab === "changelog" && (
+          <>
+            {/* Summary Tiles */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-accent-lime/20 rounded-lg text-accent-primary">
+                    <History className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Total Changes</p>
+                </div>
+                <p className="text-2xl font-black text-foreground">{trackedItems.length}</p>
+                <p className="text-[10px] text-text-muted mt-1 font-medium">All recorded actions</p>
+              </div>
+
+              <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-green-100 rounded-lg text-green-600">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Auto-Applied</p>
+                </div>
+                <p className="text-2xl font-black text-foreground">{clAutoApplied}</p>
+                <p className="text-[10px] text-text-muted mt-1 font-medium">Executed automatically</p>
+              </div>
+
+              <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-amber-100 rounded-lg text-amber-600">
+                    <Wrench className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Manual</p>
+                </div>
+                <p className="text-2xl font-black text-foreground">{clManual}</p>
+                <p className="text-[10px] text-text-muted mt-1 font-medium">Applied manually</p>
+              </div>
+
+              <div className="bg-surface border border-border/40 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-red-100 rounded-lg text-red-600">
+                    <AlertCircle className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-text-muted uppercase tracking-wider">Errors</p>
+                </div>
+                <p className="text-2xl font-black text-foreground">{clErrors}</p>
+                <p className="text-[10px] text-text-muted mt-1 font-medium">Failed executions</p>
+              </div>
+            </div>
+
+            {/* Filter Bar */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Filter:</span>
+
+              <div className="flex items-center gap-1 bg-surface border border-border/40 rounded-lg p-1">
+                {(["All", "Google", "Meta"] as PlatformFilter[]).map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setClPlatform(p)}
+                    className={cn(
+                      "px-3 py-1 rounded text-xs font-bold transition-all",
+                      clPlatform === p
+                        ? p === "Google" ? "bg-blue-600 text-white"
+                          : p === "Meta" ? "bg-purple-600 text-white"
+                          : "bg-foreground text-background"
+                        : "text-text-muted hover:text-foreground"
+                    )}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1 bg-surface border border-border/40 rounded-lg p-1">
+                {(["All", "Applied", "Manual", "Dismissed", "Error"] as StatusFilter[]).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setClStatus(s)}
+                    className={cn(
+                      "px-3 py-1 rounded text-xs font-bold transition-all",
+                      clStatus === s
+                        ? "bg-foreground text-background"
+                        : "text-text-muted hover:text-foreground"
+                    )}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+
+              {(clPlatform !== "All" || clStatus !== "All") && (
+                <button
+                  onClick={() => { setClPlatform("All"); setClStatus("All"); }}
+                  className="text-xs font-bold text-text-muted hover:text-foreground underline underline-offset-2"
+                >
+                  Clear filters
+                </button>
+              )}
+
+              <span className="ml-auto text-xs text-text-muted font-medium">
+                {filteredChangelog.length} of {trackedItems.length} changes
               </span>
             </div>
-          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-surface-hover/50">
-                  <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Platform</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Recommendation</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Applied Date</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Expected Outcome</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Status</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Outcome</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/30">
-                {trackedItems.map((item) => (
-                  <tr key={item.recommendation_id} className="hover:bg-surface-hover/30 transition-colors group">
-                    <td className="px-6 py-4">
-                      <span className={cn(
-                        "px-2 py-1 rounded text-[10px] font-bold uppercase",
-                        item.platform === "Google" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700"
-                      )}>
-                        {item.platform}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 max-w-md">
-                      <p className="text-sm font-bold text-foreground line-clamp-1">{item.title || item.suggested_action || "Manual Adjustment"}</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <p className="text-[10px] text-text-muted">{item.action_type}</p>
-                        {item.quality_label && (
-                          <span className="rounded-full border border-border/50 bg-surface-hover px-2 py-0.5 text-[9px] font-bold uppercase text-text-muted">
-                            {item.quality_label}
-                            {typeof item.confidence_score === "number" ? ` ${Math.round(item.confidence_score)}%` : ""}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-3.5 h-3.5 text-text-muted" />
-                        <span className="text-xs font-medium text-text-muted">
-                          {new Date(item.applied_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-2">
-                          <TrendingUp className="w-3.5 h-3.5 text-green-600" />
-                          <span className="text-xs font-bold text-green-700">{item.expected_impact || item.baseline_metrics.expected_outcome || "TBD"}</span>
-                        </div>
-                        {item.evidence_snapshot && (
-                          <p className="text-[10px] text-text-muted">
-                            Baseline: {typeof item.evidence_snapshot.spend === "number" ? `RM ${item.evidence_snapshot.spend.toFixed(2)}` : "spend n/a"}
-                            {typeof item.evidence_snapshot.conversions === "number" ? `, ${item.evidence_snapshot.conversions} conv.` : ""}
-                            {typeof item.evidence_snapshot.cpa === "number" ? `, RM ${item.evidence_snapshot.cpa.toFixed(2)} CPA` : ""}
-                          </p>
-                        )}
-                        {item.execution_status && (
-                          <div className={cn(
-                            "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter w-fit",
-                            item.execution_status.toLowerCase().startsWith("applied") ? "bg-green-50 text-green-700 border border-green-200" :
-                            item.execution_status.includes("Manual") ? "bg-amber-50 text-amber-700 border border-amber-200" :
-                            item.execution_status.includes("Error") ? "bg-red-50 text-red-700 border border-red-200" :
-                            "bg-gray-50 text-gray-700 border border-gray-200"
-                          )}>
-                            {item.execution_status.toLowerCase().startsWith("applied") ? <CheckCircle2 className="w-2.5 h-2.5" /> : 
-                             item.execution_status.includes("Manual") ? <Wrench className="w-2.5 h-2.5" /> :
-                             <AlertCircle className="w-2.5 h-2.5" />}
-                            {item.execution_status}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={cn(
-                        "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter border",
-                        item.status === "Failed" ? "bg-red-50 text-red-700 border-red-200" :
-                        item.status === "Dismissed" ? "bg-gray-50 text-gray-600 border-gray-200" :
-                        item.status === "Needs data" ? "bg-amber-50 text-amber-700 border-amber-200" :
-                        item.status === "Completed" ? "bg-green-50 text-green-700 border-green-200" :
-                        "bg-accent-lime/10 text-accent-primary border-accent-lime/20"
-                      )}>
-                        {item.status === "Dismissed" || item.status === "Failed" || item.status === "Completed" || item.status === "Needs data"
-                          ? item.status
-                          : `Day ${item.days_active} / 30`
-                        }
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center justify-between group">
-                        {/* Comparison logic — currently shows "Measuring" if Day 1 */}
-                        {item.status === "Dismissed" ? (
-                          <span className="text-[10px] font-bold text-text-muted uppercase">Removed from queue</span>
-                        ) : item.status === "Failed" ? (
-                          <span className="text-[10px] font-bold text-red-600 uppercase">Action failed</span>
-                        ) : item.snapshots?.day_30?.summary ? (
-                          <span className="text-xs font-bold text-green-700">{item.snapshots.day_30.summary}</span>
-                        ) : item.snapshots?.day_14?.summary ? (
-                          <span className="text-xs font-bold text-green-700">{item.snapshots.day_14.summary}</span>
-                        ) : item.snapshots?.day_7?.summary ? (
-                          <span className="text-xs font-bold text-green-700">{item.snapshots.day_7.summary}</span>
-                        ) : item.days_active < 7 ? (
+            {/* Change Log Table */}
+            <div className="bg-surface border border-border/40 rounded-3xl overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-surface-hover/50">
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Timestamp</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Platform</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Action Type</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Target</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Before → After</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Execution Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {filteredChangelog.map((item) => (
+                      <tr key={item.recommendation_id} className="hover:bg-surface-hover/30 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-2">
-                             <div className="h-1.5 w-16 bg-border/40 rounded-full overflow-hidden">
-                               <div className="h-full bg-accent-lime animate-shimmer" style={{ width: '30%' }} />
-                             </div>
-                             <span className="text-[10px] font-bold text-text-muted uppercase">Collecting Data</span>
+                            <Clock className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                            <div>
+                              <p className="text-xs font-medium text-foreground">
+                                {new Date(item.applied_at).toLocaleDateString()}
+                              </p>
+                              <p className="text-[10px] text-text-muted">
+                                {new Date(item.applied_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </p>
+                            </div>
                           </div>
-                        ) : (
-                          <span className="text-[10px] font-bold text-text-muted uppercase">Awaiting milestone snapshot</span>
-                        )}
-                        
-                        <button 
-                          onClick={async () => {
-                            if (confirm("Remove this item from tracking?")) {
-                              const res = await fetch(`/api/tracking?recommendation_id=${encodeURIComponent(item.recommendation_id)}&client_name=${encodeURIComponent(item.client_name)}`, { method: 'DELETE' });
-                              if (res.ok) {
-                                setTrackedItems(prev => prev.filter(i => i.recommendation_id !== item.recommendation_id));
-                              }
-                            }
-                          }}
-                          className="p-2 text-text-muted hover:text-red-500 transition-colors rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
-                          title="Delete from history"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                
-                {trackedItems.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-20 text-center">
-                      <div className="flex flex-col items-center gap-3 opacity-40">
-                         <AlertCircle className="w-10 h-10 text-text-muted" />
-                         <p className="text-sm font-medium text-text-muted max-w-xs">
-                           No implementations recorded yet. Apply your first recommendation to start tracking results.
-                         </p>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "px-2 py-1 rounded text-[10px] font-bold uppercase",
+                            item.platform === "Google" ? "bg-blue-50 text-blue-700" : "bg-purple-50 text-purple-700"
+                          )}>
+                            {item.platform}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs font-medium text-foreground">
+                            {formatActionType(item.action_type)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 max-w-xs">
+                          <p className="text-sm font-bold text-foreground line-clamp-1">
+                            {item.title || item.suggested_action || "—"}
+                          </p>
+                          {item.quality_label && (
+                            <span className="text-[10px] text-text-muted">{item.quality_label}</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-xs font-mono text-text-muted">
+                            {getBeforeAfter(item)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {item.execution_status ? (
+                            <div className={cn(
+                              "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter",
+                              item.execution_status.toLowerCase().startsWith("applied")
+                                ? "bg-green-50 text-green-700 border border-green-200"
+                                : item.execution_status.includes("Manual")
+                                ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                : item.execution_status.includes("Error")
+                                ? "bg-red-50 text-red-700 border border-red-200"
+                                : "bg-gray-50 text-gray-700 border border-gray-200"
+                            )}>
+                              {item.execution_status.toLowerCase().startsWith("applied") ? (
+                                <CheckCircle2 className="w-3 h-3" />
+                              ) : item.execution_status.includes("Manual") ? (
+                                <Wrench className="w-3 h-3" />
+                              ) : (
+                                <AlertCircle className="w-3 h-3" />
+                              )}
+                              {item.execution_status}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-text-muted">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
 
-        {/* Legend / Info */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-accent-primary/5 border border-accent-primary/10 p-6 rounded-3xl">
-            <h3 className="text-sm font-bold text-accent-primary flex items-center gap-2 mb-3">
-              <TrendingUp className="w-4 h-4" /> How Tracking Works
-            </h3>
-            <ul className="space-y-3">
-              <li className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">1</div>
-                <p className="text-xs text-text-muted leading-relaxed">
-                  <strong className="text-foreground">Snapshot</strong>: We capture the baseline CPA, spend, and conversion volume the moment you apply a change.
-                </p>
-              </li>
-              <li className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">2</div>
-                <p className="text-xs text-text-muted leading-relaxed">
-                  <strong className="text-foreground">7-Day Burn</strong>: Advertising algorithms take up to 7 days to stabilize. We display &ldquo;Collecting Data&rdquo; during this period.
-                </p>
-              </li>
-              <li className="flex items-start gap-3">
-                <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">3</div>
-                <p className="text-xs text-text-muted leading-relaxed">
-                  <strong className="text-foreground">Validation</strong>: Performance is compared against the previous 30-day average to calculate the final uplift.
-                </p>
-              </li>
-            </ul>
-          </div>
-          
-          <div className="flex flex-col justify-center items-center p-8 bg-surface border border-border/40 rounded-3xl text-center">
-             <div className="w-12 h-12 bg-accent-lime/20 rounded-2xl flex items-center justify-center mb-4">
-                <Zap className="w-6 h-6 text-accent-primary" />
-             </div>
-             <h3 className="text-base font-bold text-foreground mb-2">Continuous Optimization</h3>
-             <p className="text-xs text-text-muted max-w-sm leading-relaxed">
-               YCK Ads Dashboard uses these historical outcomes to improve its AI impact projections over time, making every recommendation more accurate than the last.
-             </p>
-          </div>
-        </div>
+                    {filteredChangelog.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-20 text-center">
+                          <div className="flex flex-col items-center gap-3 opacity-40">
+                            <History className="w-10 h-10 text-text-muted" />
+                            <p className="text-sm font-medium text-text-muted max-w-xs">
+                              {trackedItems.length === 0
+                                ? "No changes recorded yet. Apply your first recommendation to see it here."
+                                : "No changes match the current filters."}
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
 
       </div>
     </DashboardLayout>

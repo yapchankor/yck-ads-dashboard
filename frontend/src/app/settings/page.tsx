@@ -85,6 +85,13 @@ export default function SettingsPage() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [deliveryStatus, setDeliveryStatus] = useState<string>("Saved schedule is checked hourly when deployed.");
 
+  // Generate Report Now state
+  const [reportRange, setReportRange] = useState<"7" | "30" | "90">("30");
+  const [reportEmail, setReportEmail] = useState("");
+  const [reportEmailPrefilled, setReportEmailPrefilled] = useState(false);
+  const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done" | "error">("idle");
+  const [reportError, setReportError] = useState<string | null>(null);
+
   useEffect(() => {
     let active = true;
 
@@ -146,10 +153,43 @@ export default function SettingsPage() {
     window.localStorage.setItem("yck-email-report-settings", JSON.stringify(emailSettings));
   }, [emailSettings]);
 
+  useEffect(() => {
+    if (!reportEmailPrefilled && emailSettings.recipients.length > 0) {
+      setReportEmail(emailSettings.recipients.join(", "));
+      setReportEmailPrefilled(true);
+    }
+  }, [emailSettings.recipients, reportEmailPrefilled]);
+
   function updateEmailSettings(update: Partial<EmailReportSettings>) {
     setSettingsMessage(null);
     setSettingsError(null);
     setEmailSettings((current) => ({ ...current, ...update }));
+  }
+
+  async function generateReport() {
+    setReportStatus("generating");
+    setReportError(null);
+
+    try {
+      const response = await fetch("/api/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          days: parseInt(reportRange),
+          send_email: true,
+          email: reportEmail.trim() || undefined,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to generate report");
+      }
+      setReportStatus("done");
+    } catch (err) {
+      setReportStatus("error");
+      setReportError(err instanceof Error ? err.message : "Failed to generate report");
+    }
   }
 
   async function saveEmailSettings() {
@@ -200,7 +240,7 @@ export default function SettingsPage() {
           <p className="text-sm font-medium text-text-muted mt-1">Manage account connections, report delivery, and platform preferences.</p>
         </div>
 
-        <div className="grid max-w-6xl grid-cols-1 gap-6 xl:grid-cols-[1fr_1.15fr]">
+        <div className="grid max-w-6xl grid-cols-1 gap-6 lg:grid-cols-[1fr_1.15fr]">
           <section className="bg-surface shadow-sm rounded-2xl p-6 border border-border/60">
             <h2 className="text-lg font-bold text-foreground mb-4">Ad Account Connections</h2>
 
@@ -407,6 +447,82 @@ export default function SettingsPage() {
             </div>
           </section>
         </div>
+        {/* Generate Report Now */}
+        <section className="max-w-6xl bg-surface shadow-sm rounded-2xl p-6 border border-border/60">
+          <div className="mb-5">
+            <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
+              <FileText className="h-5 w-5 text-accent-primary" />
+              Generate Report Now
+            </h2>
+            <p className="mt-1 text-xs font-medium text-text-muted">
+              Trigger a one-time data fetch and send the report to the specified email addresses.
+            </p>
+          </div>
+
+          <div className="mb-5 flex flex-wrap items-center gap-3">
+            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Date Range</span>
+            {(["7", "30", "90"] as const).map((n) => (
+              <button
+                key={n}
+                onClick={() => { setReportRange(n); setReportStatus("idle"); }}
+                className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${
+                  reportRange === n
+                    ? "bg-accent-primary text-white border-accent-primary"
+                    : "bg-surface-hover border-border text-foreground hover:border-accent-primary"
+                }`}
+              >
+                Last {n} days
+              </button>
+            ))}
+          </div>
+
+          <div className="mb-5 max-w-lg">
+            <label className="block">
+              <span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-text-muted">
+                <Mail className="h-3.5 w-3.5" />
+                Send To
+              </span>
+              <input
+                type="text"
+                value={reportEmail}
+                onChange={(e) => { setReportEmail(e.target.value); setReportStatus("idle"); }}
+                placeholder="email@example.com, another@example.com"
+                className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground focus:border-accent-primary focus:outline-none"
+              />
+            </label>
+          </div>
+
+          {reportStatus === "done" && (
+            <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700 flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Report queued — check your email.
+            </div>
+          )}
+          {reportStatus === "error" && reportError && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+              {reportError}
+            </div>
+          )}
+
+          <button
+            onClick={generateReport}
+            disabled={reportStatus === "generating"}
+            className="inline-flex items-center gap-2 rounded-xl bg-accent-primary px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-accent-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {reportStatus === "generating" ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <FileText className="h-4 w-4" />
+                Generate &amp; Send Report
+              </>
+            )}
+          </button>
+        </section>
+
       </div>
     </DashboardLayout>
   );

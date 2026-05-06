@@ -2450,12 +2450,15 @@ async def refresh_data(request: Request, x_api_key: str = Header(None)):
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
+    send_email = bool(body.get("send_email", False))
+    email = body.get("email") or (TEST_EMAIL if send_email else None)
+
     generate_client_report.spawn(
         client_name=client_name,
         customer_id=client_data.get('customer_id'),
         facebook_ad_account_id=client_data.get('facebook_ad_account_id'),
-        email=TEST_EMAIL,
-        send_email=False,
+        email=email,
+        send_email=send_email,
         days=days,
         start_date=start_date.strftime('%Y-%m-%d'),
         end_date=end_date.strftime('%Y-%m-%d'),

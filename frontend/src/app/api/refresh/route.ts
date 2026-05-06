@@ -46,6 +46,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "start_date must be before or equal to end_date" }, { status: 400 });
   }
 
+  const sendEmail = body.send_email === true;
+  const emailParam = typeof body.email === "string" && body.email.trim() ? body.email.trim() : undefined;
+
   const response = await fetch(modalUrl, {
     method: "POST",
     headers: {
@@ -57,6 +60,8 @@ export async function POST(request: Request) {
       days: body.days,
       start_date: hasCustomRange ? body.start_date : undefined,
       end_date: hasCustomRange ? body.end_date : undefined,
+      send_email: sendEmail,
+      email: emailParam,
     }),
   });
 
