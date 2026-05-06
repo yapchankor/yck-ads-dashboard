@@ -2441,35 +2441,20 @@ async def refresh_data(request: Request, x_api_key: str = Header(None)):
     if not client_data:
         return JSONResponse(status_code=404, content={"error": "Client not found"})
         
-    try:
-        start_date, end_date, days = resolve_report_date_range(
-            body.get("days", 30),
-            body.get("start_date"),
-            body.get("end_date"),
-        )
-    except ValueError as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
-
     send_email = bool(body.get("send_email", False))
     email = body.get("email") or (TEST_EMAIL if send_email else None)
 
+    # Always fetch 90 days so every date-picker range (7/30/90) works after sync
     generate_client_report.spawn(
         client_name=client_name,
         customer_id=client_data.get('customer_id'),
         facebook_ad_account_id=client_data.get('facebook_ad_account_id'),
         email=email,
         send_email=send_email,
-        days=days,
-        start_date=start_date.strftime('%Y-%m-%d'),
-        end_date=end_date.strftime('%Y-%m-%d'),
+        days=90,
     )
-    
-    return {
-        "status": "triggered",
-        "days": days,
-        "start_date": start_date.strftime('%Y-%m-%d'),
-        "end_date": end_date.strftime('%Y-%m-%d'),
-    }
+
+    return {"status": "triggered", "days": 90}
 
 @app.function(
     schedule=modal.Cron("0 18 * * *"),  # 2 AM Malaysia Time

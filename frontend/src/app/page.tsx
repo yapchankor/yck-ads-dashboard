@@ -11,7 +11,7 @@ import { RefreshCcw } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { DateRangeSelection, normalizeDashboardDateRange } from "@/lib/date-range";
-import { fetchDashboardData, syncDashboard } from "@/lib/dashboard-refresh";
+import { fetchDashboardData, triggerDashboardRefresh } from "@/lib/dashboard-refresh";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -84,20 +84,36 @@ export default function Home() {
     setSyncing(true);
     setSyncWarning(null);
     const clientName = data.client_name;
+    const baselineFetchedAt = data.fetched_at ?? null;
     const range: DateRangeSelection = normalizeDashboardDateRange(data.date_range);
+
     try {
-      const { data: fresh, warning } = await syncDashboard({
-        clientName,
-        range,
-        onData: (d) => setData({ ...d, isLive: true }),
-      });
-      setData({ ...fresh, isLive: true });
-      if (warning) setSyncWarning(warning);
+      await triggerDashboardRefresh({ range, clientName });
+      setSyncWarning("Sync started — refreshing 90 days of data. Takes 5–10 min. This page will update automatically.");
     } catch {
-      setSyncWarning("Sync could not complete. Try again in a minute.");
-    } finally {
+      setSyncWarning("Could not trigger sync. Try again.");
       setSyncing(false);
+      return;
     }
+
+    setSyncing(false);
+
+    // Background poll — silently update when the refresh lands
+    (async () => {
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 15_000));
+        try {
+          const fresh = await fetchDashboardData(clientName);
+          if (fresh?.fetched_at && fresh.fetched_at !== baselineFetchedAt) {
+            setData({ ...fresh, isLive: true });
+            setSyncWarning(null);
+            return;
+          }
+        } catch {
+          // ignore, keep polling
+        }
+      }
+    })();
   }
 
   if (loading) {
