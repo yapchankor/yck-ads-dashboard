@@ -318,6 +318,106 @@ def fetch_adset_metrics(account, start_date, end_date):
     return ad_sets
 
 
+def fetch_adset_daily_metrics(account, start_date, end_date):
+    """Fetch ad set-level metrics segmented by date for custom range filtering."""
+    print("  Fetching daily ad set metrics...")
+
+    fields = [
+        'adset_name', 'adset_id', 'campaign_name', 'campaign_id',
+        'impressions', 'reach', 'clicks', 'ctr', 'cpc', 'cpm', 'spend',
+        'actions', 'cost_per_action_type',
+        'date_start',
+    ]
+
+    params = {
+        'time_range': {'since': start_date, 'until': end_date},
+        'level': 'adset',
+        'time_increment': 1,
+    }
+
+    try:
+        insights = account.get_insights(fields=fields, params=params)
+    except Exception as e:
+        print(f"    Warning: Could not fetch daily ad set metrics: {e}")
+        return []
+
+    rows = []
+    for row in insights:
+        conversions = parse_actions(row.get('actions'))
+        spend = float(row.get('spend', 0))
+        rows.append({
+            'date': row.get('date_start', ''),
+            'adset_name': row.get('adset_name', 'Unknown'),
+            'adset_id': str(row.get('adset_id', '')),
+            'campaign_name': row.get('campaign_name', ''),
+            'campaign_id': str(row.get('campaign_id', '')),
+            'impressions': int(row.get('impressions', 0)),
+            'reach': int(row.get('reach', 0)),
+            'clicks': int(row.get('clicks', 0)),
+            'ctr': float(row.get('ctr', 0)),
+            'cpc': float(row.get('cpc', 0)),
+            'cpm': float(row.get('cpm', 0)),
+            'spend': spend,
+            'conversions': conversions,
+            'cost_per_conversion': spend / conversions if conversions > 0 else 0,
+        })
+
+    print(f"    Found {len(rows)} daily ad set rows")
+    return rows
+
+
+def fetch_ad_daily_metrics(account, start_date, end_date):
+    """Fetch ad-level metrics segmented by date for custom range filtering."""
+    print("  Fetching daily ad metrics...")
+
+    fields = [
+        'ad_name', 'ad_id', 'adset_name', 'adset_id',
+        'campaign_name', 'campaign_id',
+        'impressions', 'reach', 'clicks', 'ctr', 'cpc', 'cpm', 'spend',
+        'actions', 'cost_per_action_type',
+        'date_start',
+    ]
+
+    params = {
+        'time_range': {'since': start_date, 'until': end_date},
+        'level': 'ad',
+        'time_increment': 1,
+        'limit': 500,
+    }
+
+    try:
+        insights = account.get_insights(fields=fields, params=params)
+    except Exception as e:
+        print(f"    Warning: Could not fetch daily ad metrics: {e}")
+        return []
+
+    rows = []
+    for row in insights:
+        conversions = parse_actions(row.get('actions'))
+        spend = float(row.get('spend', 0))
+        rows.append({
+            'date': row.get('date_start', ''),
+            'ad_name': row.get('ad_name', 'Unknown'),
+            'ad_id': str(row.get('ad_id', '')),
+            'adset_name': row.get('adset_name', ''),
+            'adset_id': str(row.get('adset_id', '')),
+            'campaign_name': row.get('campaign_name', ''),
+            'campaign_id': str(row.get('campaign_id', '')),
+            'impressions': int(row.get('impressions', 0)),
+            'reach': int(row.get('reach', 0)),
+            'clicks': int(row.get('clicks', 0)),
+            'ctr': float(row.get('ctr', 0)),
+            'cpc': float(row.get('cpc', 0)),
+            'cpm': float(row.get('cpm', 0)),
+            'spend': spend,
+            'conversions': conversions,
+            'cost_per_conversion': spend / conversions if conversions > 0 else 0,
+        })
+
+    print(f"    Found {len(rows)} daily ad rows")
+    return rows
+
+
 def _summarize_targeting(targeting):
     """Create a human-readable summary of ad set targeting."""
     parts = []
@@ -752,7 +852,9 @@ def main():
     campaigns = fetch_campaign_metrics(account, start_date, end_date)
     campaign_daily = fetch_campaign_daily_metrics(account, start_date, end_date)
     ad_sets = fetch_adset_metrics(account, start_date, end_date)
+    ad_set_daily = fetch_adset_daily_metrics(account, start_date, end_date)
     ads = fetch_ad_metrics(account, start_date, end_date)
+    ad_daily = fetch_ad_daily_metrics(account, start_date, end_date)
     demographics = fetch_demographic_breakdown(account, start_date, end_date)
     placements = fetch_placement_breakdown(account, start_date, end_date)
     geo_data = fetch_geographic_breakdown(account, start_date, end_date)
@@ -776,7 +878,9 @@ def main():
         'campaigns': sorted(campaigns, key=lambda x: x['spend'], reverse=True),
         'campaign_daily': sorted(campaign_daily, key=lambda x: (x.get('date') or '', x.get('spend', 0)), reverse=True),
         'ad_sets': sorted(ad_sets, key=lambda x: x['spend'], reverse=True),
+        'ad_set_daily': sorted(ad_set_daily, key=lambda x: (x.get('date') or '', x.get('spend', 0)), reverse=True),
         'ads': sorted(ads, key=lambda x: x['spend'], reverse=True),
+        'ad_daily': sorted(ad_daily, key=lambda x: (x.get('date') or '', x.get('spend', 0)), reverse=True),
         'demographic_breakdown': demographics,
         'placement_breakdown': sorted(placements, key=lambda x: x['spend'], reverse=True),
         'geo_performance': sorted(geo_data, key=lambda x: x['clicks'], reverse=True),
@@ -799,7 +903,9 @@ def main():
     print(f"  Campaigns: {len(campaigns)}")
     print(f"  Daily Campaign Rows: {len(campaign_daily)}")
     print(f"  Ad Sets: {len(ad_sets)}")
+    print(f"  Daily Ad Set Rows: {len(ad_set_daily)}")
     print(f"  Ads: {len(ads)}")
+    print(f"  Daily Ad Rows: {len(ad_daily)}")
     print(f"  Demographics: {len(demographics)} segments")
     print(f"  Placements: {len(placements)} segments")
     print(f"  Geo: {len(geo_data)} regions")

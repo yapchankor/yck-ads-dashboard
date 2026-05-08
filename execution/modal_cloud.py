@@ -251,6 +251,48 @@ def aggregate_meta_daily(rows, start_date, end_date, campaign_lookup=None):
 
     return sorted(campaigns, key=lambda x: x.get("spend", 0), reverse=True)
 
+def aggregate_entity_daily(rows, start_date, end_date, id_key, name_key, extra_keys=None):
+    """
+    Generic daily-row aggregator for ad groups, ad sets, and ads.
+    Sums raw counts then derives rates — never averages rates directly.
+    Uses string-coerced keys to handle both int (Google) and long-string (Meta) IDs.
+    """
+    grouped = {}
+    for row in rows or []:
+        row_date = row.get("date")
+        if not row_date or row_date < start_date or row_date > end_date:
+            continue
+        key = str(row.get(id_key) or row.get(name_key) or "unknown")
+        item = grouped.setdefault(key, {
+            id_key: row.get(id_key),
+            name_key: row.get(name_key, "Unknown"),
+            "spend": 0.0,
+            "impressions": 0,
+            "clicks": 0,
+            "conversions": 0.0,
+            "conversion_value": 0.0,
+        })
+        for k in (extra_keys or []):
+            if k not in item and row.get(k) is not None:
+                item[k] = row[k]
+        item["spend"] += float(row.get("spend", 0) or row.get("cost", 0) or 0)
+        item["impressions"] += int(row.get("impressions", 0) or 0)
+        item["clicks"] += int(row.get("clicks", 0) or 0)
+        item["conversions"] += float(row.get("conversions", 0) or 0)
+        item["conversion_value"] += float(row.get("conversion_value", 0) or 0)
+
+    result = []
+    for item in grouped.values():
+        item["spend"] = round(item["spend"], 2)
+        item["conversions"] = round(item["conversions"], 2)
+        item["ctr"] = item["clicks"] / item["impressions"] if item["impressions"] else 0
+        item["cost_per_conversion"] = round(item["spend"] / item["conversions"], 2) if item["conversions"] else 0
+        item["roas"] = item["conversion_value"] / item["spend"] if item["spend"] else 0
+        result.append(item)
+
+    return sorted(result, key=lambda x: x.get("spend", 0), reverse=True)
+
+
 def summarize_campaigns(campaigns):
     total_spend = sum(c.get("spend", c.get("cost", 0)) or 0 for c in campaigns)
     total_conversions = sum(c.get("conversions", 0) or 0 for c in campaigns)
@@ -2262,12 +2304,55 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
                 
                 # --- Inject Facebook detailed breakdowns ---
                 if filtered_from_daily:
+                    # Aggregate Google ad groups from daily rows
+                    data['ad_groups'] = aggregate_entity_daily(
+                        google_data.get('ad_group_daily', []),
+                        start_date, end_date,
+                        id_key='id', name_key='name',
+                        extra_keys=['campaign_id', 'campaign_name', 'campaign_status', 'status'],
+                    )
+
+                    # Aggregate Meta ad sets from daily rows; merge static fields from full cache
+                    meta_ad_sets = aggregate_entity_daily(
+                        fb_data.get('ad_set_daily', []),
+                        start_date, end_date,
+                        id_key='adset_id', name_key='adset_name',
+                        extra_keys=['campaign_id', 'campaign_name'],
+                    )
+                    adsets_static = {str(a.get('adset_id')): a for a in fb_data.get('ad_sets', [])}
+                    for adset in meta_ad_sets:
+                        static = adsets_static.get(str(adset.get('adset_id')), {})
+                        adset['status'] = static.get('status', 'UNKNOWN')
+                        adset['optimization_goal'] = static.get('optimization_goal', '')
+                        adset['targeting_summary'] = static.get('targeting_summary', '')
+                        adset['daily_budget'] = static.get('daily_budget', 0)
+                        adset['lifetime_budget'] = static.get('lifetime_budget', 0)
+                    data['ad_sets'] = meta_ad_sets
+
+                    # Aggregate Meta ads from daily rows; merge static creative fields from full cache
+                    meta_ads = aggregate_entity_daily(
+                        fb_data.get('ad_daily', []),
+                        start_date, end_date,
+                        id_key='ad_id', name_key='ad_name',
+                        extra_keys=['adset_id', 'adset_name', 'campaign_id', 'campaign_name'],
+                    )
+                    fb_ads_static = {str(a.get('ad_id')): a for a in fb_data.get('ads', [])}
+                    for ad in meta_ads:
+                        static = fb_ads_static.get(str(ad.get('ad_id')), {})
+                        ad['status'] = static.get('status', 'UNKNOWN')
+                        ad['headline'] = static.get('headline', '')
+                        ad['body'] = static.get('body', '')
+                        ad['link_url'] = static.get('link_url', '')
+                        ad['cta'] = static.get('cta', '')
+                        ad['image_url'] = static.get('image_url', '')
+                        ad['creative_preview_url'] = static.get('image_url', '')
+                    data['ads'] = meta_ads
+
+                    # No daily data for these — clear them
                     data['search_queries'] = []
                     data['geo_performance'] = []
                     data['keywords'] = []
                     data['insights'] = []
-                    data['ad_sets'] = []
-                    data['ads'] = []
                     data['demographic_breakdown'] = []
                     data['placement_breakdown'] = []
                     data['meta_geo_performance'] = []

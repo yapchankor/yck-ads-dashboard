@@ -4,22 +4,24 @@ Provides concrete, quantified impact calculations with confidence levels.
 """
 
 
-def calculate_exclusion_impact(spend, conversions=0):
+def _to_monthly(value, date_days):
+    """Normalize a value from an arbitrary date window to a monthly projection."""
+    return value / max(date_days, 1) * 30.44
+
+
+def calculate_exclusion_impact(spend, conversions=0, date_days=30):
     """
     Calculate impact of excluding zero-converting audiences/placements.
 
-    Assumptions:
-    - Zero conversions = all spend is waste
-    - Trend continues if not excluded
-
     Args:
-        spend: Weekly spend on the segment
+        spend: Spend over the selected date range
         conversions: Number of conversions (should be 0 for exclusions)
+        date_days: Number of days in the selected range (used to normalize to monthly)
 
     Returns:
         dict with monthly_savings, confidence, confidence_pct, formula
     """
-    monthly_savings = spend * 4
+    monthly_savings = _to_monthly(spend, date_days)
 
     return {
         'monthly_savings': monthly_savings,
@@ -27,7 +29,7 @@ def calculate_exclusion_impact(spend, conversions=0):
         'additional_revenue_monthly': 0,
         'confidence': 'high',
         'confidence_pct': 90,
-        'formula': f"Weekly spend (RM {spend:.2f}) × 4 weeks = RM {monthly_savings:.2f} saved",
+        'formula': f"Spend RM {spend:.2f} / {date_days}d × 30.44 = RM {monthly_savings:.2f} saved/month",
         'assumptions': [
             'Segment has 0 conversions, all spend is waste',
             'Trend continues if not excluded'
@@ -35,23 +37,16 @@ def calculate_exclusion_impact(spend, conversions=0):
     }
 
 
-def calculate_scaling_impact(current_spend, current_conversions, scale_factor=1.25, customer_value=None):
+def calculate_scaling_impact(current_spend, current_conversions, scale_factor=1.25, customer_value=None, date_days=30):
     """
     Calculate impact of scaling budget for top performers.
 
-    Assumptions:
-    - 25% budget increase → 20% volume increase (diminishing returns)
-    - CPA increases 10% (lower intent traffic as you scale)
-    - Default customer value: Conservative estimate based on CPA
-
     Args:
-        current_spend: Weekly spend
-        current_conversions: Weekly conversions
+        current_spend: Spend over the selected date range
+        current_conversions: Conversions over the selected date range
         scale_factor: Budget multiplier (1.25 = 25% increase)
-        customer_value: Revenue per conversion (if None, uses conservative 3× CPA estimate)
-
-    Returns:
-        dict with impact metrics, confidence, formula
+        customer_value: Revenue per conversion
+        date_days: Number of days in the selected range (used to normalize to monthly)
     """
     if current_conversions == 0:
         return {
@@ -64,19 +59,16 @@ def calculate_scaling_impact(current_spend, current_conversions, scale_factor=1.
             'assumptions': []
         }
 
-    # Calculate current CPA
     current_cpa = current_spend / current_conversions
 
-    # If no customer value provided, use conservative estimate (3× CPA = 200% ROI target)
     if customer_value is None:
         customer_value = current_cpa * 3
         value_note = f'RM {customer_value:.0f} (estimated 3× CPA)'
     else:
         value_note = f'RM {customer_value}'
 
-    # Diminishing returns: volume doesn't scale 1:1 with budget
-    volume_increase_rate = 0.20  # 25% budget → 20% volume
-    cpa_degradation = 1.10  # CPA gets 10% worse
+    volume_increase_rate = 0.20
+    cpa_degradation = 1.10
 
     new_cpa = current_cpa * cpa_degradation
     additional_conversions = current_conversions * volume_increase_rate
@@ -86,10 +78,10 @@ def calculate_scaling_impact(current_spend, current_conversions, scale_factor=1.
 
     return {
         'monthly_savings': 0,
-        'additional_conversions_monthly': additional_conversions * 4,
-        'additional_spend_monthly': additional_spend * 4,
-        'additional_revenue_monthly': additional_revenue * 4,
-        'net_benefit_monthly': net_benefit * 4,
+        'additional_conversions_monthly': _to_monthly(additional_conversions, date_days),
+        'additional_spend_monthly': _to_monthly(additional_spend, date_days),
+        'additional_revenue_monthly': _to_monthly(additional_revenue, date_days),
+        'net_benefit_monthly': _to_monthly(net_benefit, date_days),
         'new_cpa': new_cpa,
         'confidence': 'moderate',
         'confidence_pct': 70,
@@ -102,7 +94,7 @@ def calculate_scaling_impact(current_spend, current_conversions, scale_factor=1.
     }
 
 
-def calculate_creative_refresh_impact(spend, frequency, current_ctr, current_conversions, customer_value=None):
+def calculate_creative_refresh_impact(spend, frequency, current_ctr, current_conversions, customer_value=None, date_days=30):
     """
     Calculate impact of refreshing fatigued creatives.
 
@@ -154,9 +146,9 @@ def calculate_creative_refresh_impact(spend, frequency, current_ctr, current_con
 
     return {
         'monthly_savings': 0,
-        'additional_conversions_monthly': additional_conversions * 4,
-        'additional_revenue_monthly': additional_revenue * 4,
-        'net_benefit_monthly': net_benefit * 4,
+        'additional_conversions_monthly': _to_monthly(additional_conversions, date_days),
+        'additional_revenue_monthly': _to_monthly(additional_revenue, date_days),
+        'net_benefit_monthly': _to_monthly(net_benefit, date_days),
         'ctr_improvement_pct': int(ctr_improvement * 100),
         'conv_rate_improvement_pct': int(conv_rate_improvement * 100),
         'confidence': 'moderate',
@@ -171,7 +163,7 @@ def calculate_creative_refresh_impact(spend, frequency, current_ctr, current_con
     }
 
 
-def calculate_schedule_impact(wasted_hours_spend, avg_conv_rate=0.02, peak_multiplier=2.5, avg_cpa=50, customer_value=None):
+def calculate_schedule_impact(wasted_hours_spend, avg_conv_rate=0.02, peak_multiplier=2.5, avg_cpa=50, customer_value=None, date_days=30):
     """
     Calculate impact of adjusting ad schedule to avoid wasted hours.
 
@@ -206,9 +198,9 @@ def calculate_schedule_impact(wasted_hours_spend, avg_conv_rate=0.02, peak_multi
 
     return {
         'monthly_savings': monthly_savings,
-        'additional_conversions_monthly': redirected_conversions * 4,
-        'additional_revenue_monthly': additional_revenue * 4,
-        'net_benefit_monthly': additional_revenue * 4,
+        'additional_conversions_monthly': _to_monthly(redirected_conversions, date_days),
+        'additional_revenue_monthly': _to_monthly(additional_revenue, date_days),
+        'net_benefit_monthly': _to_monthly(additional_revenue, date_days),
         'confidence': 'moderate',
         'confidence_pct': 70,
         'formula': f"RM {wasted_hours_spend:.2f} redirected to peak hours ({peak_multiplier}× conversion rate)",
@@ -221,7 +213,7 @@ def calculate_schedule_impact(wasted_hours_spend, avg_conv_rate=0.02, peak_multi
     }
 
 
-def calculate_bid_adjustment_impact(current_bid, suggested_bid, keyword_spend, keyword_conversions, customer_value=None):
+def calculate_bid_adjustment_impact(current_bid, suggested_bid, keyword_spend, keyword_conversions, customer_value=None, date_days=30):
     """
     Calculate impact of bid adjustments (Google Ads).
 
@@ -273,13 +265,13 @@ def calculate_bid_adjustment_impact(current_bid, suggested_bid, keyword_spend, k
 
         return {
             'monthly_savings': 0,
-            'additional_conversions_monthly': additional_conversions * 4,
-            'additional_spend_monthly': additional_spend * 4,
-            'additional_revenue_monthly': additional_revenue * 4,
-            'net_benefit_monthly': net_benefit * 4,
+            'additional_conversions_monthly': _to_monthly(additional_conversions, date_days),
+            'additional_spend_monthly': _to_monthly(additional_spend, date_days),
+            'additional_revenue_monthly': _to_monthly(additional_revenue, date_days),
+            'net_benefit_monthly': _to_monthly(net_benefit, date_days),
             'confidence': 'moderate',
             'confidence_pct': 70,
-            'formula': f"+{int(bid_change_pct * 100)}% bid → +{int(volume_increase * 100)}% volume = {additional_conversions:.1f} conv/week",
+            'formula': f"+{int(bid_change_pct * 100)}% bid → +{int(volume_increase * 100)}% volume = {additional_conversions:.1f} more conv/{date_days}d",
             'assumptions': [
                 f'{int(bid_change_pct * 100)}% bid increase → {int(volume_increase * 100)}% volume increase (80% efficiency)',
                 f'Customer value: {value_note}'
@@ -290,10 +282,10 @@ def calculate_bid_adjustment_impact(current_bid, suggested_bid, keyword_spend, k
         conversions_lost = keyword_conversions * 0.20 if keyword_conversions > 0 else 0  # Lose 20% of conversions
 
         return {
-            'monthly_savings': savings * 4,
-            'conversions_lost_monthly': conversions_lost * 4,
-            'additional_conversions_monthly': -conversions_lost,
-            'net_benefit_monthly': savings * 4,
+            'monthly_savings': _to_monthly(savings, date_days),
+            'conversions_lost_monthly': _to_monthly(conversions_lost, date_days),
+            'additional_conversions_monthly': -_to_monthly(conversions_lost, date_days),
+            'net_benefit_monthly': _to_monthly(savings, date_days),
             'confidence': 'moderate',
             'confidence_pct': 70,
             'formula': f"{int(abs(bid_change_pct) * 100)}% bid cut → save RM {savings:.2f}/week",

@@ -112,7 +112,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                               fatigue_analysis=None, dow_analysis=None,
                               objective_analysis=None, roas_analysis=None,
                               creative_pattern_analysis=None, geo_bid_analysis=None,
-                              landing_page_analysis=None):
+                              landing_page_analysis=None, date_days=30):
     """Generate actionable recommendations from all analyses."""
     recommendations = []
     currency = metrics.get('currency', 'MYR')
@@ -145,7 +145,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
     # 1. Audience exclusion recommendations
     for seg in audience_analysis.get('wasted_segments', [])[:3]:
         # Calculate impact
-        impact_data = calculate_exclusion_impact(seg['spend'], conversions=0)
+        impact_data = calculate_exclusion_impact(seg['spend'], conversions=0, date_days=date_days)
         automation = get_automation_metadata('audience_exclusion', platform='facebook')
 
         rec = {
@@ -171,8 +171,9 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
         impact_data = calculate_creative_refresh_impact(
             spend=ad.get('spend', 0),
             frequency=ad.get('frequency', 1),
-            current_ctr=ad.get('ctr', 0) / 100.0,  # Convert percentage to decimal
-            current_conversions=ad.get('conversions', 0)
+            current_ctr=ad.get('ctr', 0) / 100.0,
+            current_conversions=ad.get('conversions', 0),
+            date_days=date_days
         )
         automation = get_automation_metadata('creative_refresh', platform='facebook')
 
@@ -197,7 +198,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
     for pl in placement_analysis.get('placements', []):
         if pl.get('efficiency') == 'poor' and pl['spend'] > 10:
             # Calculate impact
-            impact_data = calculate_exclusion_impact(pl['spend'], conversions=0)
+            impact_data = calculate_exclusion_impact(pl['spend'], conversions=0, date_days=date_days)
             automation = get_automation_metadata('placement_exclusion', platform='facebook')
 
             rec = {
@@ -251,7 +252,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
     # 5. Geographic recommendations
     for loc in geo_analysis.get('poor_locations', [])[:2]:
         # Calculate impact
-        impact_data = calculate_exclusion_impact(loc['spend'], conversions=0)
+        impact_data = calculate_exclusion_impact(loc['spend'], conversions=0, date_days=date_days)
         automation = get_automation_metadata('geo_exclusion', platform='facebook')
 
         rec = {
@@ -287,7 +288,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
             peak_hours = [h for h in peak_hours if h is not None]
 
             # Calculate impact
-            impact_data = calculate_schedule_impact(wasted_hours_spend=wasted_in_worst)
+            impact_data = calculate_schedule_impact(wasted_hours_spend=wasted_in_worst, date_days=date_days)
             automation = get_automation_metadata('schedule_adjustment', platform='facebook')
 
             rec = {
@@ -313,7 +314,8 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
             impact_data = calculate_scaling_impact(
                 current_spend=candidate.get('spend', 0),
                 current_conversions=candidate.get('conversions', 0),
-                scale_factor=1.25
+                scale_factor=1.25,
+                date_days=date_days,
             )
             automation = get_automation_metadata('budget_scaling', platform='facebook')
             current_budget = candidate.get('current_budget') or candidate.get('daily_budget') or candidate.get('lifetime_budget') or 0
@@ -342,7 +344,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
 
         for candidate in top_perf_analysis.get('review_candidates', [])[:2]:
             # Calculate impact (savings from pausing)
-            impact_data = calculate_exclusion_impact(candidate.get('spend', 0), conversions=0)
+            impact_data = calculate_exclusion_impact(candidate.get('spend', 0), conversions=0, date_days=date_days)
             automation = get_automation_metadata('campaign_review', platform='facebook')
 
             rec = {
@@ -393,7 +395,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
             total_wasted = dow_analysis.get('total_wasted_on_days', 0)
 
             # Calculate impact
-            impact_data = calculate_schedule_impact(wasted_hours_spend=total_wasted)
+            impact_data = calculate_schedule_impact(wasted_hours_spend=total_wasted, date_days=date_days)
             automation = get_automation_metadata('day_schedule', platform='facebook')
 
             rec = {
@@ -448,7 +450,8 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 current_spend=opp.get('spend', 0),
                 current_conversions=conversions,
                 scale_factor=1.30,
-                customer_value=200
+                customer_value=200,
+                date_days=date_days
             )
             automation = get_automation_metadata('roas_scaling', platform='facebook')
 
@@ -523,7 +526,8 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
             impact_data = calculate_scaling_impact(
                 current_spend=loc.get('spend', 0),
                 current_conversions=loc.get('conversions', 0),
-                scale_factor=1.20
+                scale_factor=1.20,
+                date_days=date_days,
             )
             automation = get_automation_metadata('geo_scaling', platform='facebook')
 
@@ -735,6 +739,7 @@ def main():
         creative_pattern_analysis=creative_pattern_analysis,
         geo_bid_analysis=geo_bid_analysis,
         landing_page_analysis=landing_page_analysis,
+        date_days=days_in_range,
     )
 
     # Build insights output

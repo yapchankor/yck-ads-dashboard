@@ -69,11 +69,17 @@ export default function Home() {
       setRefreshError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load dashboard date range.";
-      setRefreshError(
-        message.includes("(409)")
-          ? "This date range is not available in the fast cache yet. It will become available after the scheduled data sync runs."
-          : message,
-      );
+      if (message.includes("(409)")) {
+        // Range not cached yet — snap back to default and reload silently
+        try {
+          const fallback = await fetchDashboardData(clientName);
+          setData({ ...fallback, isLive: true });
+        } catch {
+          setRefreshError(message);
+        }
+      } else {
+        setRefreshError(message);
+      }
     } finally {
       setRefreshingRange(false);
     }

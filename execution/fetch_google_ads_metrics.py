@@ -183,6 +183,60 @@ def fetch_campaign_daily_metrics(client, customer_id, start_date, end_date):
     return rows
 
 
+def fetch_adgroup_daily_metrics(client, customer_id, start_date, end_date):
+    """Fetch ad group-level metrics segmented by date for custom range filtering."""
+    ga_service = client.get_service("GoogleAdsService")
+
+    query = f"""
+        SELECT
+            segments.date,
+            campaign.id,
+            campaign.name,
+            campaign.status,
+            ad_group.id,
+            ad_group.name,
+            ad_group.status,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value
+        FROM ad_group
+        WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
+            AND ad_group.status != 'REMOVED'
+        ORDER BY segments.date DESC, metrics.cost_micros DESC
+    """
+
+    rows = []
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=query)
+        for batch in response:
+            for row in batch.results:
+                cost = row.metrics.cost_micros / 1_000_000
+                conversions = row.metrics.conversions
+                rows.append({
+                    "date": row.segments.date,
+                    "campaign_id": row.campaign.id,
+                    "campaign_name": row.campaign.name,
+                    "campaign_status": row.campaign.status.name,
+                    "id": row.ad_group.id,
+                    "name": row.ad_group.name,
+                    "status": row.ad_group.status.name,
+                    "impressions": row.metrics.impressions,
+                    "clicks": row.metrics.clicks,
+                    "cost": cost,
+                    "conversions": conversions,
+                    "conversion_value": row.metrics.conversions_value,
+                    "cost_per_conversion": cost / conversions if conversions > 0 else 0,
+                    "roas": row.metrics.conversions_value / cost if cost > 0 else 0,
+                })
+    except GoogleAdsException as ex:
+        print(f"Daily ad group metrics failed: {ex.error.code().name}")
+        return []
+
+    return rows
+
+
 def fetch_adgroup_metrics(client, customer_id, start_date, end_date):
     """Fetch ad group-level performance metrics."""
     ga_service = client.get_service("GoogleAdsService")
@@ -912,6 +966,9 @@ def main():
     print("  - Fetching daily campaign metrics...")
     campaign_daily = fetch_campaign_daily_metrics(client, args.customer_id, args.start_date, args.end_date)
 
+    print("  - Fetching daily ad group metrics...")
+    ad_group_daily = fetch_adgroup_daily_metrics(client, args.customer_id, args.start_date, args.end_date)
+
     print("  - Fetching ad group metrics...")
     ad_groups = fetch_adgroup_metrics(client, args.customer_id, args.start_date, args.end_date)
 
@@ -942,6 +999,7 @@ def main():
         "fetched_at": datetime.now().isoformat(),
         "campaigns": campaigns,
         "campaign_daily": campaign_daily,
+        "ad_group_daily": ad_group_daily,
         "ad_groups": ad_groups,
         "keywords": keywords,
         "ads": ads,
@@ -967,6 +1025,7 @@ def main():
             "total_device_segments": len(device_performance),
             "total_negative_keywords": len(negative_keywords),
             "total_campaign_daily_rows": len(campaign_daily),
+            "total_ad_group_daily_rows": len(ad_group_daily),
             "total_impressions": sum(c["impressions"] for c in campaigns),
             "total_clicks": sum(c["clicks"] for c in campaigns),
             "total_cost": sum(c["cost"] for c in campaigns),

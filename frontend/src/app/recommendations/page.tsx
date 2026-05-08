@@ -146,27 +146,27 @@ const MetaIcon = () => (
 
 function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCount: number }) {
   const items = [
-    {
+    impact.monthlySavings > 0 && {
       label: "Monthly Savings",
       value: `RM ${impact.monthlySavings.toLocaleString()}`,
       sub: "From eliminating waste",
     },
-    {
+    impact.additionalConversions > 0 && {
       label: "Additional Conversions",
       value: impact.additionalConversions.toLocaleString(),
       sub: "Monthly projection",
     },
-    {
+    impact.additionalRevenue > 0 && {
       label: "Additional Revenue",
       value: `RM ${impact.additionalRevenue.toLocaleString()}`,
       sub: "From scaling winners",
     },
-    {
+    impact.netMonthlyBenefit > 0 && {
       label: "Net Monthly Benefit",
       value: `RM ${impact.netMonthlyBenefit.toLocaleString()}`,
       sub: "Total value unlock",
     },
-  ];
+  ].filter(Boolean) as { label: string; value: string; sub: string }[];
 
   return (
     <div className="bg-gradient-to-br from-indigo-600 to-purple-700 text-white rounded-2xl p-5 mb-5">
@@ -181,7 +181,7 @@ function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCoun
           {impact.autoCount} auto-actionable · {impact.manualCount} manual required
         </p>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className={`grid gap-3 ${items.length <= 2 ? "grid-cols-2" : items.length === 3 ? "grid-cols-3" : "grid-cols-2 md:grid-cols-4"}`}>
         {items.map((item) => (
           <div key={item.label} className="bg-white/15 rounded-xl p-3">
             <p className="text-[11px] text-white/70 mb-1 leading-tight">{item.label}</p>

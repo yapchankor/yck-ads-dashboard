@@ -7,6 +7,7 @@ Generates comprehensive analysis including search queries, quality score roadmap
 import json
 import sys
 import os
+from datetime import datetime
 sys.path.append('execution')
 
 from analyze_advanced_insights import (
@@ -41,6 +42,10 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     search_queries = metrics.get('search_queries', [])
 
     print(f"Loaded: {len(campaigns)} campaigns, {len(keywords)} keywords, {len(search_queries)} search queries")
+
+    start_dt = datetime.strptime(metrics['date_range']['start_date'], '%Y-%m-%d')
+    end_dt = datetime.strptime(metrics['date_range']['end_date'], '%Y-%m-%d')
+    days_in_range = (end_dt - start_dt).days or 1
 
     def is_inactive_status(status):
         return str(status or '').upper() in {'PAUSED', 'REMOVED', 'DELETED', 'INACTIVE', 'ENDED', 'ARCHIVED'}
@@ -164,7 +169,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     ]
     for kw in sorted(low_qs_no_conv, key=lambda x: x['cost'], reverse=True)[:3]:
         # Calculate impact
-        impact_data = calculate_exclusion_impact(kw['cost'], conversions=0)
+        impact_data = calculate_exclusion_impact(kw['cost'], conversions=0, date_days=days_in_range)
         automation = get_automation_metadata('keyword_action', platform='google')
 
         recommendations.append({
@@ -202,7 +207,8 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
             current_bid=current_bid,
             suggested_bid=suggested_bid,
             keyword_spend=kw['cost'],
-            keyword_conversions=kw['conversions']
+            keyword_conversions=kw['conversions'],
+            date_days=days_in_range,
         )
         automation = get_automation_metadata('bid_adjustment', platform='google')
 
@@ -241,7 +247,8 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
             current_bid=current_bid,
             suggested_bid=suggested_bid,
             keyword_spend=kw['cost'],
-            keyword_conversions=kw['conversions']
+            keyword_conversions=kw['conversions'],
+            date_days=days_in_range,
         )
         automation = get_automation_metadata('bid_adjustment', platform='google')
 
@@ -293,7 +300,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
         automation = get_automation_metadata('ad_copy', platform='google')
         impact_data = {
             'monthly_savings': 0,
-            'additional_conversions_monthly': ag_data['conversions'] * 0.12 * 4,  # 12% CTR improvement
+            'additional_conversions_monthly': ag_data['conversions'] * 0.12 / days_in_range * 30.44,
             'confidence': 'moderate',
             'confidence_pct': 65,
             'formula': f"Estimated 12% CTR improvement from targeted ad copy",
@@ -322,12 +329,13 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
         seen_keywords.add(kw_key)
 
         # Calculate impact
+        monthly_savings = neg_kw['wasted_spend'] / days_in_range * 30.44
         impact_data = {
-            'monthly_savings': neg_kw['wasted_spend'],
+            'monthly_savings': monthly_savings,
             'additional_conversions_monthly': 0,
             'confidence': 'high',
             'confidence_pct': 85,
-            'formula': f"Prevents RM {neg_kw['wasted_spend']:.2f}/month in irrelevant clicks",
+            'formula': f"Spend RM {neg_kw['wasted_spend']:.2f} / {days_in_range}d × 30.44 = RM {monthly_savings:.2f} saved/month",
             'assumptions': ['Pattern will continue without negatives', 'No conversion potential from these queries']
         }
         automation = get_automation_metadata('keyword_action', platform='google')
@@ -345,7 +353,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
             "negative_keywords": [neg_kw['negative_keyword']],
             "match_type": neg_kw.get('match_type', 'PHRASE'),
             "reason": neg_kw['reason'],
-            "expected_impact": f"Prevent RM {neg_kw['wasted_spend']:.2f} monthly waste ({impact_data['confidence_pct']}% confidence)",
+            "expected_impact": f"Prevent RM {monthly_savings:.2f} monthly waste ({impact_data['confidence_pct']}% confidence)",
             "impact_data": impact_data,
             "automation": automation,
         })
@@ -391,7 +399,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
                 target_negative_keywords = [wasted['search_term']]
 
             # Calculate impact
-            impact_data = calculate_exclusion_impact(wasted['cost'], conversions=0)
+            impact_data = calculate_exclusion_impact(wasted['cost'], conversions=0, date_days=days_in_range)
             automation = get_automation_metadata('keyword_action', platform='google')
 
             recommendations.append({
