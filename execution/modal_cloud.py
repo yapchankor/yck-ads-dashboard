@@ -1571,6 +1571,27 @@ def test_single_client(client_name: str = "YAP CHAN KOR"):
 
     print(f"✅ Test complete - check {TEST_EMAIL} for report")
 
+@app.local_entrypoint()
+def refresh_client_now(
+    client_name: str,
+    customer_id: str = "",
+    facebook_ad_account_id: str = "",
+    days: int = 90,
+    start_date: str = "",
+    end_date: str = "",
+):
+    """Refresh cached dashboard data for a client without sending email."""
+    generate_client_report.remote(
+        client_name=client_name,
+        customer_id=customer_id or None,
+        facebook_ad_account_id=facebook_ad_account_id or None,
+        email=None,
+        send_email=False,
+        days=days,
+        start_date=start_date or None,
+        end_date=end_date or None,
+    )
+
 # ============================================================================
 # WEB API ENDPOINTS
 # ============================================================================

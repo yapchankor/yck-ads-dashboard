@@ -527,6 +527,8 @@ def fetch_ad_metrics(account, start_date, end_date):
                             ad_creatives[ad_id]['body'] = link_data.get('message', '')
                         if not ad_creatives[ad_id]['link_url']:
                             ad_creatives[ad_id]['link_url'] = link_data.get('link', '')
+                        if not ad_creatives[ad_id]['image_url']:
+                            ad_creatives[ad_id]['image_url'] = link_data.get('picture', '')
 
                 except Exception:
                     pass  # Creative details are nice-to-have, not essential
@@ -548,11 +550,15 @@ def fetch_ad_metrics(account, start_date, end_date):
             'adset_id': row.get('adset_id', ''),
             'campaign_name': row.get('campaign_name', ''),
             'campaign_id': row.get('campaign_id', ''),
+            'creative_id': creative_info.get('creative_id', ''),
             'status': creative_info.get('status', 'UNKNOWN'),
+            'effective_status': creative_info.get('status', 'UNKNOWN'),
             'headline': creative_info.get('headline', ''),
             'body': creative_info.get('body', ''),
             'link_url': creative_info.get('link_url', ''),
             'cta': creative_info.get('cta', ''),
+            'image_url': creative_info.get('image_url', ''),
+            'creative_preview_url': creative_info.get('image_url', ''),
             'impressions': int(row.get('impressions', 0)),
             'reach': int(row.get('reach', 0)),
             'frequency': float(row.get('frequency', 0)),
