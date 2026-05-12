@@ -45,7 +45,7 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
 
     start_dt = datetime.strptime(metrics['date_range']['start_date'], '%Y-%m-%d')
     end_dt = datetime.strptime(metrics['date_range']['end_date'], '%Y-%m-%d')
-    days_in_range = (end_dt - start_dt).days or 1
+    days_in_range = max(1, (end_dt - start_dt).days + 1)
 
     def is_inactive_status(status):
         return str(status or '').upper() in {'PAUSED', 'REMOVED', 'DELETED', 'INACTIVE', 'ENDED', 'ARCHIVED'}
@@ -156,6 +156,40 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
 
     def criterion_resource_name(keyword):
         return keyword.get('resource_name') or ''
+
+    def monthly_savings_from_period(value, factor=1.0):
+        return value * factor / days_in_range * 30.44
+
+    def enrich_analyzer_recommendation(rec):
+        rec = rec.copy()
+        rec.setdefault("platform", "Google")
+        rec.setdefault("impact", "Medium")
+        rec.setdefault("automation", get_automation_metadata(rec.get("type", "review"), platform='google'))
+        if rec.get("impact_data"):
+            return rec
+
+        current_spend = float(rec.get("current_spend") or 0)
+        if current_spend == 0:
+            current_spend = float(rec.get("cost") or 0)
+        adjustment = str(rec.get("suggested_adjustment") or "")
+        factor = 1.0
+        if adjustment.endswith("%"):
+            try:
+                factor = abs(float(adjustment.replace("%", "").replace("+", ""))) / 100
+            except ValueError:
+                factor = 1.0
+
+        rec["impact_data"] = {
+            "monthly_savings": monthly_savings_from_period(current_spend, factor) if current_spend else 0,
+            "additional_conversions_monthly": 0,
+            "additional_revenue_monthly": 0,
+            "net_benefit_monthly": monthly_savings_from_period(current_spend, factor) if current_spend else 0,
+            "confidence": "moderate",
+            "confidence_pct": 60,
+            "formula": f"Period spend RM {current_spend:.2f} x {factor:.0%} adjustment / {days_in_range}d x 30.44",
+            "assumptions": ["Analyzer recommendation based on segmented performance", "Bid modifiers may affect volume as well as spend"],
+        }
+        return rec
 
     # 1. KEYWORD PAUSE RECOMMENDATIONS - for low QS + no conversions
     low_qs_no_conv = [
@@ -450,17 +484,17 @@ def create_enhanced_insights(metrics_file, output_insights, output_recommendatio
     # 8. GEOGRAPHIC RECOMMENDATIONS
     if geo_performance.get('recommendations'):
         for geo_rec in geo_performance['recommendations']:
-            recommendations.append(geo_rec)
+            recommendations.append(enrich_analyzer_recommendation(geo_rec))
 
     # 9. TIME-OF-DAY / DAY-OF-WEEK RECOMMENDATIONS
     if time_performance.get('recommendations'):
         for time_rec in time_performance['recommendations']:
-            recommendations.append(time_rec)
+            recommendations.append(enrich_analyzer_recommendation(time_rec))
 
     # 10. DEVICE RECOMMENDATIONS
     if device_performance.get('recommendations'):
         for device_rec in device_performance['recommendations']:
-            recommendations.append(device_rec)
+            recommendations.append(enrich_analyzer_recommendation(device_rec))
 
     # Calculate ROI
     print("Calculating ROI impact...")

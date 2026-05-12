@@ -33,6 +33,7 @@ interface TrackedItem {
   current_bid?: number;
   suggested_bid?: number;
   current_budget?: number;
+  suggested_adjustment?: string;
   evidence_snapshot?: {
     spend?: number | null;
     clicks?: number | null;
@@ -56,11 +57,17 @@ function formatActionType(s: string): string {
 }
 
 function getBeforeAfter(item: TrackedItem): string {
+  if (["device_bid_adjustment", "geo_bid_adjustment", "schedule_bid_adjustment"].includes(item.action_type)) {
+    return item.suggested_adjustment ? `Bid modifier -> ${item.suggested_adjustment}` : "Bid modifier";
+  }
   if (item.action_type === "bid_adjustment" && item.current_bid != null) {
     const after = item.suggested_bid != null ? `RM ${item.suggested_bid.toFixed(2)}` : "—";
     return `RM ${item.current_bid.toFixed(2)} → ${after}`;
   }
   if (item.action_type === "budget_adjustment" && item.current_budget != null) {
+    if (item.suggested_bid != null) {
+      return `RM ${item.current_budget.toFixed(2)} -> RM ${item.suggested_bid.toFixed(2)}`;
+    }
     return `RM ${item.current_budget.toFixed(2)} → —`;
   }
   return "—";

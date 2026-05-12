@@ -241,8 +241,10 @@ export default function RecommendationsPage() {
   const allRecs = recommendations || [];
   const googleRecs = allRecs.filter(r => r.platform === "Google");
   const metaRecs = allRecs.filter(r => r.platform === "Meta");
+  const crossPlatformRecs = allRecs.filter(r => r.platform === "Cross-Platform");
   const googleImpact = computePlatformImpact(googleRecs);
   const metaImpact = computePlatformImpact(metaRecs);
+  const crossPlatformImpact = computePlatformImpact(crossPlatformRecs);
 
   return (
     <DashboardLayout>
@@ -265,6 +267,33 @@ export default function RecommendationsPage() {
           </div>
         ) : (
           <>
+            {crossPlatformRecs.length > 0 && (
+              <section className="flex flex-col gap-0">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-teal-50 border border-teal-100">
+                    <span className="text-sm font-black text-teal-700">XP</span>
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-foreground leading-tight">Cross-Platform</h2>
+                    <p className="text-xs text-text-muted">
+                      {crossPlatformRecs.length} recommendation{crossPlatformRecs.length !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                </div>
+
+                <TotalImpactCard impact={crossPlatformImpact} recCount={crossPlatformRecs.length} />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {crossPlatformRecs.map((rec) => (
+                    <RecommendationCard
+                      key={rec.id}
+                      recommendation={rec}
+                      clientName={clientName}
+                      baselineMetrics={baselineMetrics}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
             {/* ── Google Ads Section ── */}
             <section className="flex flex-col gap-0">
               <div className="flex items-center gap-2.5 mb-4">

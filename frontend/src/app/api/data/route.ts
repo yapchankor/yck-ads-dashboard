@@ -50,7 +50,8 @@ function enrichRecommendation(raw: any) {
   const platform = (raw.platform || "Google").toLowerCase();
   const googleAuto = new Set([
     "bid_adjustment", "budget_change", "keyword_action",
-    "ad_copy", "add_negative_keyword"
+    "ad_copy", "add_negative_keyword",
+    "device_bid_adjustment", "geo_bid_adjustment", "schedule_bid_adjustment"
   ]);
   const metaAuto = new Set([
     "budget_adjustment", "budget_scaling",
@@ -65,7 +66,9 @@ function enrichRecommendation(raw: any) {
     (platform === "meta" && metaAuto.has(type))
   ) && hasRequiredTarget;
   const backendSentAutomation = typeof raw.automation_allowed === "boolean";
-  const automationAllowed = backendSentAutomation ? raw.automation_allowed : legacyAutomationAllowed;
+  const automationAllowed = backendSentAutomation
+    ? raw.automation_allowed
+    : Boolean(raw.automation?.is_automatable) || legacyAutomationAllowed;
   const guardrailStatus = raw.guardrail_status || "eligible";
   const qualityLabel = raw.quality_label || (automationAllowed && guardrailStatus === "eligible" ? "High confidence" : "Manual only");
 
@@ -124,6 +127,8 @@ function enrichRecommendation(raw: any) {
     guardrail_status: guardrailStatus,
     guardrail_reasons: Array.isArray(raw.guardrail_reasons) ? raw.guardrail_reasons : [],
     evidence: raw.evidence || null,
+    impact_data: raw.impact_data || null,
+    automation: raw.automation || null,
     automation_allowed: automationAllowed,
     isManualOnly: (() => {
       if (guardrailStatus === "manual_only") return true;
@@ -187,6 +192,12 @@ export async function GET(request: Request) {
     }
 
     const data = await response.json();
+    const rawGoogleAds = Array.isArray(data.google_ads) ? data.google_ads : [];
+    const rawAds = Array.isArray(data.ads) ? data.ads : [];
+    const metaAds = rawAds.filter((a: any) => a.adset_id || a.adset_name || a.ad_name);
+    const googleAds = rawGoogleAds.length > 0
+      ? rawGoogleAds
+      : rawAds.filter((a: any) => !a.adset_id && !a.adset_name && !a.ad_name);
     
     // Transform backend data to frontend expected structure
     const mappedData = {
@@ -290,7 +301,7 @@ export async function GET(request: Request) {
         conversion_value: a.conversion_value || 0,
         roas: a.roas || 0,
       })),
-      google_ads: (data.ads || []).map((a: any) => ({
+      google_ads: googleAds.map((a: any) => ({
         resource_name: a.resource_name || null,
         ad_id: a.ad_id || "",
         ad_type: a.ad_type || "",
@@ -311,6 +322,31 @@ export async function GET(request: Request) {
         cost: a.cost || a.spend || 0,
         conversions: a.conversions || 0,
         conversion_value: a.conversion_value || 0,
+        roas: a.roas || 0,
+      })),
+      ads: metaAds.map((a: any) => ({
+        ad_name: a.ad_name || a.name || "",
+        ad_id: a.ad_id || "",
+        adset_name: a.adset_name || "",
+        adset_id: a.adset_id || "",
+        campaign_name: a.campaign_name || "",
+        campaign_id: a.campaign_id || "",
+        status: a.status || "",
+        effective_status: a.effective_status || "",
+        creative_id: a.creative_id || "",
+        headline: a.headline || "",
+        body: a.body || "",
+        link_url: a.link_url || "",
+        cta: a.cta || "",
+        image_url: a.image_url || a.creative_preview_url || "",
+        impressions: a.impressions || 0,
+        reach: a.reach || 0,
+        frequency: a.frequency || 0,
+        clicks: a.clicks || 0,
+        spend: a.spend || 0,
+        conversions: a.conversions || 0,
+        ctr: a.ctr || 0,
+        cpa: a.cost_per_conversion || a.cpa || 0,
         roas: a.roas || 0,
       })),
       // --- Meta-specific detailed data (passed through from FB metrics) ---
@@ -400,6 +436,7 @@ export async function GET(request: Request) {
       facebook_ad_account_id: data.facebook_ad_account_id || null,
       date_range: data.date_range || null,
       platform_date_ranges: data.platform_date_ranges || null,
+      fetched_at: data.fetched_at || null,
     };
 
     return NextResponse.json(mappedData);

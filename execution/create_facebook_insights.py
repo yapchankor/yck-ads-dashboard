@@ -640,7 +640,7 @@ def main():
     from datetime import datetime
     start = datetime.strptime(metrics['date_range']['start_date'], '%Y-%m-%d')
     end = datetime.strptime(metrics['date_range']['end_date'], '%Y-%m-%d')
-    days_in_range = (end - start).days or 1
+    days_in_range = max(1, (end - start).days + 1)
 
     # Run all analyses
     print("Running analyses...")

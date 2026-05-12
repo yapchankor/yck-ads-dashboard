@@ -2,7 +2,7 @@
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { CheckCircle2, Clock, FileText, Mail, Save, Users } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 type EmailReportSettings = {
   enabled: boolean;
@@ -88,7 +88,7 @@ export default function SettingsPage() {
   // Generate Report Now state
   const [reportRange, setReportRange] = useState<"7" | "30" | "90">("30");
   const [reportEmail, setReportEmail] = useState("");
-  const [reportEmailPrefilled, setReportEmailPrefilled] = useState(false);
+  const reportEmailPrefilledRef = useRef(false);
   const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done" | "error">("idle");
   const [reportError, setReportError] = useState<string | null>(null);
 
@@ -154,11 +154,16 @@ export default function SettingsPage() {
   }, [emailSettings]);
 
   useEffect(() => {
-    if (!reportEmailPrefilled && emailSettings.recipients.length > 0) {
-      setReportEmail(emailSettings.recipients.join(", "));
-      setReportEmailPrefilled(true);
+    if (reportEmailPrefilledRef.current || emailSettings.recipients.length === 0) {
+      return;
     }
-  }, [emailSettings.recipients, reportEmailPrefilled]);
+
+    queueMicrotask(() => {
+      if (reportEmailPrefilledRef.current) return;
+      setReportEmail(emailSettings.recipients.join(", "));
+      reportEmailPrefilledRef.current = true;
+    });
+  }, [emailSettings.recipients]);
 
   function updateEmailSettings(update: Partial<EmailReportSettings>) {
     setSettingsMessage(null);
@@ -169,13 +174,25 @@ export default function SettingsPage() {
   async function generateReport() {
     setReportStatus("generating");
     setReportError(null);
+    const days = parseInt(reportRange);
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(end.getDate() - days + 1);
+    const toDateParam = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
 
     try {
       const response = await fetch("/api/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          days: parseInt(reportRange),
+          days,
+          start_date: toDateParam(start),
+          end_date: toDateParam(end),
           send_email: true,
           email: reportEmail.trim() || undefined,
         }),
@@ -184,6 +201,18 @@ export default function SettingsPage() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(payload.error || "Failed to generate report");
+      }
+      if (payload.job_id) {
+        for (let i = 0; i < 60; i++) {
+          await new Promise((resolve) => setTimeout(resolve, i === 0 ? 2000 : 5000));
+          const statusResponse = await fetch(`/api/refresh-status?job_id=${encodeURIComponent(payload.job_id)}`);
+          if (!statusResponse.ok) break;
+          const statusPayload = await statusResponse.json();
+          if (statusPayload.status === "succeeded") break;
+          if (statusPayload.status === "failed") {
+            throw new Error((statusPayload.errors || []).join("; ") || "Report generation failed");
+          }
+        }
       }
       setReportStatus("done");
     } catch (err) {

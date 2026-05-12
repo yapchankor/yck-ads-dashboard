@@ -39,7 +39,7 @@ export function parseDateInput(value: string) {
 export function getPresetRange(days: number): DateRangeSelection {
   const end = new Date();
   const start = new Date(end);
-  start.setDate(end.getDate() - days);
+  start.setDate(end.getDate() - days + 1);
 
   return {
     days,
@@ -53,7 +53,7 @@ export function getRangeDayCount(startDate: string, endDate: string) {
   const start = parseDateInput(startDate);
   const end = parseDateInput(endDate);
   if (!start || !end) return undefined;
-  return Math.max(1, Math.round((end.getTime() - start.getTime()) / MS_PER_DAY));
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / MS_PER_DAY) + 1);
 }
 
 export function normalizeDashboardDateRange(range: DashboardDateRange): DateRangeSelection {

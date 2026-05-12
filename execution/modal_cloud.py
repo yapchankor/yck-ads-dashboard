@@ -90,18 +90,18 @@ def resolve_report_date_range(days=None, start_date=None, end_date=None):
             raise ValueError("Dates must use YYYY-MM-DD format") from exc
         if start > end:
             raise ValueError("start_date must be before or equal to end_date")
-        return start, end, max(1, (end - start).days)
+        return start, end, max(1, (end - start).days + 1)
 
     resolved_days = normalize_days(days)
     end = datetime.now()
-    start = end - timedelta(days=resolved_days)
+    start = end - timedelta(days=resolved_days - 1)
     return start, end, resolved_days
 
 def date_range_days(start_date, end_date):
     try:
         start = datetime.strptime(start_date, "%Y-%m-%d")
         end = datetime.strptime(end_date, "%Y-%m-%d")
-        return max(1, (end - start).days)
+        return max(1, (end - start).days + 1)
     except Exception:
         return None
 
@@ -150,7 +150,7 @@ def aggregate_google_daily(rows, start_date, end_date):
     for item in grouped.values():
         item["spend"] = round(item["spend"], 2)
         item["conversions"] = round(item["conversions"], 2)
-        item["ctr"] = item["clicks"] / item["impressions"] if item["impressions"] else 0
+        item["ctr"] = (item["clicks"] / item["impressions"] * 100) if item["impressions"] else 0
         item["cpa"] = round(item["spend"] / item["conversions"], 2) if item["conversions"] else 0
         item["cost_per_conversion"] = item["cpa"]
         item["roas"] = item["conversion_value"] / item["spend"] if item["spend"] else 0
@@ -285,7 +285,7 @@ def aggregate_entity_daily(rows, start_date, end_date, id_key, name_key, extra_k
     for item in grouped.values():
         item["spend"] = round(item["spend"], 2)
         item["conversions"] = round(item["conversions"], 2)
-        item["ctr"] = item["clicks"] / item["impressions"] if item["impressions"] else 0
+        item["ctr"] = (item["clicks"] / item["impressions"] * 100) if item["impressions"] else 0
         item["cost_per_conversion"] = round(item["spend"] / item["conversions"], 2) if item["conversions"] else 0
         item["roas"] = item["conversion_value"] / item["spend"] if item["spend"] else 0
         result.append(item)
@@ -307,6 +307,64 @@ def summarize_campaigns(campaigns):
         "cost_per_conversion": round(total_spend / total_conversions, 2) if total_conversions else 0,
     }
 
+def generate_cross_platform_recommendations(data):
+    campaigns = data.get("campaigns") or []
+    by_platform = {}
+    for campaign in campaigns:
+        platform = campaign.get("platform") or "Google"
+        stats = by_platform.setdefault(platform, {"spend": 0.0, "conversions": 0.0, "campaigns": 0})
+        stats["spend"] += float(campaign.get("spend", campaign.get("cost", 0)) or 0)
+        stats["conversions"] += float(campaign.get("conversions", 0) or 0)
+        stats["campaigns"] += 1
+
+    google = by_platform.get("Google")
+    meta = by_platform.get("Meta")
+    if not google or not meta:
+        return []
+
+    for stats in (google, meta):
+        stats["cpa"] = stats["spend"] / stats["conversions"] if stats["conversions"] else None
+
+    if not google["cpa"] or not meta["cpa"]:
+        return []
+
+    winner_name, winner = ("Google", google) if google["cpa"] < meta["cpa"] else ("Meta", meta)
+    loser_name, loser = ("Meta", meta) if winner_name == "Google" else ("Google", google)
+    if loser["cpa"] <= winner["cpa"] * 1.25:
+        return []
+
+    shift_amount = min(loser["spend"] * 0.1, winner["spend"] * 0.2)
+    potential_conversions = shift_amount / winner["cpa"] if winner["cpa"] else 0
+    current_conversions = shift_amount / loser["cpa"] if loser["cpa"] else 0
+    additional_conversions = max(0, potential_conversions - current_conversions)
+
+    return [{
+        "id": f"cross_platform_budget_shift_{winner_name.lower()}_{loser_name.lower()}",
+        "recommendation_id": f"cross_platform_budget_shift_{winner_name.lower()}_{loser_name.lower()}",
+        "type": "cross_platform_budget_shift",
+        "action_type": "cross_platform_budget_shift",
+        "title": f"Shift test budget from {loser_name} to {winner_name}",
+        "description": (
+            f"{winner_name} CPA is RM {winner['cpa']:.2f} versus {loser_name} CPA RM {loser['cpa']:.2f}. "
+            f"Move a controlled RM {shift_amount:.0f} test budget toward the more efficient platform."
+        ),
+        "platform": "Cross-Platform",
+        "impact": "Medium",
+        "expected_impact": f"Potential +{additional_conversions:.1f} conversions if CPA holds.",
+        "impact_data": {
+            "monthly_savings": 0,
+            "additional_conversions_monthly": additional_conversions,
+            "additional_revenue_monthly": 0,
+            "net_benefit_monthly": 0,
+            "confidence": "moderate",
+            "confidence_pct": 65,
+        },
+        "automation": {
+            "is_automatable": False,
+            "manual_reason": "Cross-platform budget shifts require human approval and budget planning.",
+        },
+    }]
+
 def load_clients():
     clients_file = Path("/data/clients.json")
     if not clients_file.exists():
@@ -319,6 +377,26 @@ def save_clients(clients):
     with open(clients_file, "w") as f:
         json.dump(clients, f, indent=2)
     volume.commit()
+
+def update_job_status(job_id, **updates):
+    if not job_id:
+        return
+    jobs_file = Path("/data/jobs.json")
+    try:
+        if jobs_file.exists():
+            with open(jobs_file, "r") as f:
+                jobs = json.load(f)
+        else:
+            jobs = {}
+        job = jobs.get(job_id, {})
+        job.update(updates)
+        job["updated_at"] = datetime.now().isoformat()
+        jobs[job_id] = job
+        with open(jobs_file, "w") as f:
+            json.dump(jobs, f, indent=2)
+        volume.commit()
+    except Exception as exc:
+        print(f"Warning: could not update job {job_id}: {exc}")
 
 def parse_email_recipients(value):
     if not value:
@@ -489,22 +567,22 @@ ACTION_CONTRACTS = {
         "manual_reason": "This location insight needs a linked campaign or ad set before it can be automated; refresh Meta data or review it in Ads Manager.",
     },
     "schedule_bid_adjustment": {
-        "automation": "manual",
+        "automation": "auto",
         "risk": "low",
         "category": "schedule",
-        "manual_reason": "Schedule bid adjustments are not automated yet.",
+        "manual_reason": "Schedule bid adjustments require a campaign ID, time slot, and percentage adjustment.",
     },
     "geo_bid_adjustment": {
-        "automation": "manual",
+        "automation": "auto",
         "risk": "low",
         "category": "geo",
-        "manual_reason": "Geo bid adjustments are not automated yet.",
+        "manual_reason": "Geo bid adjustments require a campaign ID, location criterion ID, and percentage adjustment.",
     },
     "device_bid_adjustment": {
-        "automation": "manual",
+        "automation": "auto",
         "risk": "low",
         "category": "device",
-        "manual_reason": "Device bid adjustments are not automated yet because they require campaign-level device bid-modifier support checks.",
+        "manual_reason": "Device bid adjustments require a campaign ID, device, and percentage adjustment.",
     },
     "creative_refresh": {
         "automation": "auto",
@@ -572,6 +650,12 @@ ACTION_CONTRACTS = {
         "category": "revenue",
         "manual_reason": "ROAS recommendations require verified conversion value tracking.",
     },
+    "cross_platform_budget_shift": {
+        "automation": "manual",
+        "risk": "high",
+        "category": "budget",
+        "manual_reason": "Cross-platform budget shifts require human approval and budget planning.",
+    },
 }
 DEFAULT_ACTION_CONTRACT = {
     "automation": "manual",
@@ -618,7 +702,7 @@ def audience_segment_safe_for_automation(segment):
 
 def has_required_automation_fields(action_type_norm, rec):
     if action_type_norm == "add_negative_keyword":
-        return bool(rec.get("campaign_id") and rec.get("keyword"))
+        return bool(rec.get("campaign_id") and (rec.get("keyword") or rec.get("negative_keywords")))
 
     if action_type_norm == "keyword_action":
         suggested_norm = normalize_match_value(rec.get("suggested_action") or rec.get("suggested"))
@@ -656,6 +740,10 @@ def has_required_automation_fields(action_type_norm, rec):
         return bool(rec.get("adset_id") and rec.get("placement"))
 
     if action_type_norm == "geo_exclusion":
+        if normalize_match_value(rec.get("platform")) == "google":
+            campaign_ids = rec.get("campaign_ids") or []
+            has_campaign = bool(rec.get("campaign_id") or campaign_ids)
+            return bool(has_campaign and (rec.get("location_id") or rec.get("location_key")))
         return bool(rec.get("adset_id") and (rec.get("location") or rec.get("location_key") or rec.get("region_key")))
 
     if action_type_norm == "creative_refresh":
@@ -679,6 +767,21 @@ def has_required_automation_fields(action_type_norm, rec):
 
     if action_type_norm == "campaign_action":
         return bool(rec.get("campaign_id")) and is_google_campaign_id(rec.get("campaign_id"))
+
+    if action_type_norm == "device_bid_adjustment":
+        campaign_ids = rec.get("campaign_ids") or []
+        has_campaign = bool(rec.get("campaign_id") or campaign_ids)
+        return bool(has_campaign and rec.get("device") and rec.get("suggested_adjustment"))
+
+    if action_type_norm == "geo_bid_adjustment":
+        campaign_ids = rec.get("campaign_ids") or []
+        has_campaign = bool(rec.get("campaign_id") or campaign_ids)
+        return bool(has_campaign and (rec.get("location_id") or rec.get("location_key")) and rec.get("suggested_adjustment"))
+
+    if action_type_norm == "schedule_bid_adjustment":
+        campaign_ids = rec.get("campaign_ids") or []
+        has_campaign = bool(rec.get("campaign_id") or campaign_ids)
+        return bool(has_campaign and rec.get("time_slot") and rec.get("suggested_adjustment"))
 
     return False
 
@@ -1195,7 +1298,8 @@ def generate_client_report(
     days: int = 30,
     start_date: str = None,
     end_date: str = None,
-    email_settings: dict = None
+    email_settings: dict = None,
+    job_id: str = None,
 ):
     import os
     import shutil
@@ -1203,6 +1307,7 @@ def generate_client_report(
     import sys
     
     os.makedirs("/tmp", exist_ok=True)
+    update_job_status(job_id, status="running", started_at=datetime.now().isoformat())
     setup_credentials()
     
     start_date, end_date, days = resolve_report_date_range(days, start_date, end_date)
@@ -1263,6 +1368,9 @@ def generate_client_report(
                 summary['google_spend'] = m_summary.get('total_cost', 0)
                 summary['google_conversions'] = m_summary.get('total_conversions', 0)
 
+        except SystemExit:
+            print(f"ERROR Google Ads: Script exited early")
+            errors.append("Google Ads: Script exited early")
         except Exception as e:
             print(f"ERROR Google Ads: {str(e)}")
             errors.append(f"Google Ads: {str(e)}")
@@ -1344,6 +1452,15 @@ def generate_client_report(
         print(f"Data refreshed for {client_name}; email delivery disabled")
     else:
         print(f"❌ No dashboards generated for {client_name}")
+    update_job_status(
+        job_id,
+        status="failed" if errors and not dashboards else "succeeded",
+        completed_at=datetime.now().isoformat(),
+        errors=errors,
+        dashboards=[name for name, _ in dashboards],
+        start_date=start_date.strftime('%Y-%m-%d'),
+        end_date=end_date.strftime('%Y-%m-%d'),
+    )
 
 # ============================================================================
 # EMAIL SENDING
@@ -1476,6 +1593,8 @@ class ApplyRequest(BaseModel):
     target_id: Any = None
     campaign_id: Any = None
     keyword: Any = None
+    negative_keywords: Optional[list[Any]] = None
+    match_type: Any = None
     suggested_bid: Optional[float] = None
     current_budget: Optional[float] = None
     budget_basis: Any = None
@@ -1488,8 +1607,16 @@ class ApplyRequest(BaseModel):
     location: Any = None
     location_key: Any = None
     location_type: Any = None
+    location_id: Any = None
     best_hours: Optional[list[Any]] = None
     wasted_days: Optional[list[Any]] = None
+    campaign_ids: Optional[list[Any]] = None
+    device: Any = None
+    suggested_adjustment: Any = None
+    time_slot: Any = None
+    current_cpa: Optional[float] = None
+    current_spend: Optional[float] = None
+    current_performance: Any = None
     normalized_key: Any = None
     quality_label: Any = None
     confidence_score: Optional[float] = None
@@ -1748,6 +1875,12 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     request.target_id = request_text(request.target_id)
     request.campaign_id = request_text(request.campaign_id)
     request.keyword = request_text(request.keyword)
+    request.negative_keywords = [
+        request_text(keyword)
+        for keyword in (request.negative_keywords or [])
+        if request_text(keyword)
+    ]
+    request.match_type = request_text(request.match_type)
     request.adset_id = request_text(request.adset_id)
     request.ad_id = request_text(request.ad_id)
     request.ad_name = request_text(request.ad_name)
@@ -1756,7 +1889,12 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     request.placement = request_text(request.placement)
     request.location = request_text(request.location)
     request.location_key = request_text(request.location_key)
+    request.location_id = request_text(request.location_id)
     request.location_type = request_text(request.location_type)
+    request.device = request_text(request.device)
+    request.suggested_adjustment = request_text(request.suggested_adjustment)
+    request.time_slot = request_text(request.time_slot)
+    request.current_performance = request_text(request.current_performance)
     request.budget_basis = request_text(request.budget_basis)
     request.normalized_key = request_text(request.normalized_key)
     request.quality_label = request_text(request.quality_label)
@@ -1867,8 +2005,47 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
             if not customer_id:
                 execution_status = "Error: Missing Google Ads customer ID for this client."
                 response_status = "error"
-            elif action_type_norm == "add_negative_keyword" and request.campaign_id and request.keyword:
-                execution_result = google_ads_executor.add_negative_keyword(customer_id, request.campaign_id, request.keyword)
+            elif action_type_norm == "device_bid_adjustment" and (request.campaign_id or request.campaign_ids) and request.device and request.suggested_adjustment:
+                campaign_ids = [request.campaign_id] if request.campaign_id else [str(c) for c in (request.campaign_ids or []) if c]
+                results = [
+                    google_ads_executor.update_device_bid_modifier(customer_id, campaign_id, request.device, request.suggested_adjustment)
+                    for campaign_id in campaign_ids
+                ]
+                execution_result = {"status": "success" if all(r.get("status") == "success" for r in results) else "error", "results": results}
+                execution_status, response_status = google_execution_result("device bid modifier updated", execution_result)
+            elif action_type_norm == "geo_bid_adjustment" and (request.campaign_id or request.campaign_ids) and (request.location_key or request.location_id) and request.suggested_adjustment:
+                campaign_ids = [request.campaign_id] if request.campaign_id else [str(c) for c in (request.campaign_ids or []) if c]
+                location_id = request.location_key or request.location_id
+                results = [
+                    google_ads_executor.update_geo_bid_modifier(customer_id, campaign_id, location_id, request.suggested_adjustment)
+                    for campaign_id in campaign_ids
+                ]
+                execution_result = {"status": "success" if all(r.get("status") == "success" for r in results) else "error", "results": results}
+                execution_status, response_status = google_execution_result("geo bid modifier updated", execution_result)
+            elif action_type_norm == "geo_exclusion" and (request.campaign_id or request.campaign_ids) and (request.location_key or request.location_id):
+                campaign_ids = [request.campaign_id] if request.campaign_id else [str(c) for c in (request.campaign_ids or []) if c]
+                location_id = request.location_key or request.location_id
+                results = [
+                    google_ads_executor.exclude_geo_location(customer_id, campaign_id, location_id)
+                    for campaign_id in campaign_ids
+                ]
+                execution_result = {"status": "success" if all(r.get("status") == "success" for r in results) else "error", "results": results}
+                execution_status, response_status = google_execution_result("geo location excluded", execution_result)
+            elif action_type_norm == "schedule_bid_adjustment" and (request.campaign_id or request.campaign_ids) and request.time_slot and request.suggested_adjustment:
+                campaign_ids = [request.campaign_id] if request.campaign_id else [str(c) for c in (request.campaign_ids or []) if c]
+                results = [
+                    google_ads_executor.update_ad_schedule_bid_modifier(customer_id, campaign_id, request.time_slot, request.suggested_adjustment)
+                    for campaign_id in campaign_ids
+                ]
+                execution_result = {"status": "success" if all(r.get("status") == "success" for r in results) else "error", "results": results}
+                execution_status, response_status = google_execution_result("ad schedule bid modifier updated", execution_result)
+            elif action_type_norm == "add_negative_keyword" and request.campaign_id and (request.negative_keywords or request.keyword):
+                keywords_to_add = request.negative_keywords or [request.keyword]
+                results = [
+                    google_ads_executor.add_negative_keyword(customer_id, request.campaign_id, keyword, request.match_type or "PHRASE")
+                    for keyword in keywords_to_add
+                ]
+                execution_result = {"status": "success" if all(r.get("status") == "success" for r in results) else "error", "results": results}
                 execution_status, response_status = google_execution_result("negative keyword added", execution_result)
             elif action_type_norm == "keyword_action" and suggested_action_norm in {"paused", "pause"} and is_google_ad_group_criterion_resource(request.target_id):
                 execution_result = google_ads_executor.pause_ad_group_criterion(customer_id, request.target_id)
@@ -1984,10 +2161,20 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "placement": request.placement,
         "location": request.location,
         "location_key": request.location_key,
+        "location_id": request.location_id,
         "location_type": request.location_type,
         "best_hours": request.best_hours,
         "wasted_days": request.wasted_days,
+        "campaign_ids": request.campaign_ids or [],
+        "device": request.device,
+        "suggested_adjustment": request.suggested_adjustment,
+        "time_slot": request.time_slot,
+        "current_cpa": request.current_cpa,
+        "current_spend": request.current_spend,
+        "current_performance": request.current_performance,
         "keyword": request.keyword,
+        "negative_keywords": request.negative_keywords,
+        "match_type": request.match_type,
         "current_budget": request.current_budget,
         "budget_basis": request.budget_basis,
         "suggested_bid": request.suggested_bid,
@@ -2148,12 +2335,23 @@ def update_email_settings(request: EmailSettingsRequest, x_api_key: str = Header
     volumes={"/data": volume},
 )
 @modal.fastapi_endpoint(method="GET", label="api-dashboard")
-def get_dashboard_data(client_name: str, start_date: str = None, end_date: str = None, x_api_key: str = Header(None)):
+def get_dashboard_data(client_name: str = None, start_date: str = None, end_date: str = None, job_id: str = None, x_api_key: str = Header(None)):
     require_api_key("ADSPULSE_INTERNAL_API_KEY", x_api_key)
     
     import glob
     import generate_dashboard_data
     volume.reload()
+
+    if job_id:
+        jobs_file = Path("/data/jobs.json")
+        if not jobs_file.exists():
+            return JSONResponse(status_code=404, content={"error": "Job not found"})
+        with open(jobs_file, "r") as f:
+            jobs = json.load(f)
+        job = jobs.get(job_id)
+        if not job:
+            return JSONResponse(status_code=404, content={"error": "Job not found"})
+        return job
 
     requested_range = bool(start_date or end_date)
     if requested_range:
@@ -2197,8 +2395,10 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
         data['customer_id'] = client_data.get('customer_id')
         data['facebook_ad_account_id'] = client_data.get('facebook_ad_account_id')
         data['fetched_at'] = google_data.get('fetched_at')
+        data['google_ads'] = data.get('ads', [])
 
-        filtered_from_daily = False
+        google_filtered_from_daily = False
+        meta_filtered_from_daily = False
         if requested_range:
             requested_date_range = {
                 "start_date": start_date,
@@ -2215,7 +2415,7 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
                     end_date
                 )
                 data['date_range'] = requested_date_range
-                filtered_from_daily = True
+                google_filtered_from_daily = True
             else:
                 return JSONResponse(
                     status_code=409,
@@ -2245,6 +2445,18 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
         data['platform_date_ranges'] = {
             'google': data.get('date_range')
         }
+
+        if google_filtered_from_daily:
+            data['ad_groups'] = aggregate_entity_daily(
+                google_data.get('ad_group_daily', []),
+                start_date, end_date,
+                id_key='id', name_key='name',
+                extra_keys=['campaign_id', 'campaign_name', 'campaign_status', 'status'],
+            )
+            data['search_queries'] = []
+            data['geo_performance'] = []
+            data['keywords'] = []
+            data['insights'] = []
         
         # --- Inject Facebook Data if available ---
         fb_id = client_data.get('facebook_ad_account_id', '').replace('act_', '')
@@ -2275,7 +2487,7 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
                             campaign_lookup
                         )
                         data['platform_date_ranges']['meta'] = requested_date_range
-                        filtered_from_daily = True
+                        meta_filtered_from_daily = True
                     else:
                         return JSONResponse(
                             status_code=409,
@@ -2303,15 +2515,7 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
                         data['summary']['cost_per_conversion'] = data['summary']['total_spend'] / data['summary']['total_conversions']
                 
                 # --- Inject Facebook detailed breakdowns ---
-                if filtered_from_daily:
-                    # Aggregate Google ad groups from daily rows
-                    data['ad_groups'] = aggregate_entity_daily(
-                        google_data.get('ad_group_daily', []),
-                        start_date, end_date,
-                        id_key='id', name_key='name',
-                        extra_keys=['campaign_id', 'campaign_name', 'campaign_status', 'status'],
-                    )
-
+                if meta_filtered_from_daily:
                     # Aggregate Meta ad sets from daily rows; merge static fields from full cache
                     meta_ad_sets = aggregate_entity_daily(
                         fb_data.get('ad_set_daily', []),
@@ -2346,20 +2550,18 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
                         ad['cta'] = static.get('cta', '')
                         ad['image_url'] = static.get('image_url', '')
                         ad['creative_preview_url'] = static.get('image_url', '')
+                    data['meta_ads'] = meta_ads
                     data['ads'] = meta_ads
 
                     # No daily data for these — clear them
-                    data['search_queries'] = []
-                    data['geo_performance'] = []
-                    data['keywords'] = []
-                    data['insights'] = []
                     data['demographic_breakdown'] = []
                     data['placement_breakdown'] = []
                     data['meta_geo_performance'] = []
                     data['time_performance'] = {}
                 else:
                     data['ad_sets'] = fb_data.get('ad_sets', [])
-                    data['ads'] = fb_data.get('ads', [])
+                    data['meta_ads'] = fb_data.get('ads', [])
+                    data['ads'] = data['meta_ads']
                     data['demographic_breakdown'] = fb_data.get('demographic_breakdown', [])
                     data['placement_breakdown'] = fb_data.get('placement_breakdown', [])
                     data['meta_geo_performance'] = fb_data.get('geo_performance', [])
@@ -2416,8 +2618,10 @@ def get_dashboard_data(client_name: str, start_date: str = None, end_date: str =
         if requested_range:
             data['date_range'] = requested_date_range
             data['summary'] = summarize_campaigns(data.get('campaigns', []))
-            if filtered_from_daily:
-                data['recommendations'] = []
+            if google_filtered_from_daily or meta_filtered_from_daily:
+                data['recommendation_date_scope'] = "latest_full_cache"
+
+        data['recommendations'].extend(generate_cross_platform_recommendations(data))
 
         data = apply_recommendation_guardrails(data)
 
@@ -2528,18 +2732,47 @@ async def refresh_data(request: Request, x_api_key: str = Header(None)):
         
     send_email = bool(body.get("send_email", False))
     email = body.get("email") or (TEST_EMAIL if send_email else None)
+    days = body.get("days") or 90
+    start_date = body.get("start_date")
+    end_date = body.get("end_date")
+    try:
+        resolved_start, resolved_end, resolved_days = resolve_report_date_range(days, start_date, end_date)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
 
-    # Always fetch 90 days so every date-picker range (7/30/90) works after sync
+    job_id = f"job_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    update_job_status(
+        job_id,
+        status="queued",
+        type="refresh_report",
+        client_name=client_name,
+        created_at=datetime.now().isoformat(),
+        start_date=resolved_start.strftime('%Y-%m-%d'),
+        end_date=resolved_end.strftime('%Y-%m-%d'),
+        days=resolved_days,
+        send_email=send_email,
+    )
+
     generate_client_report.spawn(
         client_name=client_name,
         customer_id=client_data.get('customer_id'),
         facebook_ad_account_id=client_data.get('facebook_ad_account_id'),
         email=email,
         send_email=send_email,
-        days=90,
+        days=resolved_days,
+        start_date=resolved_start.strftime('%Y-%m-%d'),
+        end_date=resolved_end.strftime('%Y-%m-%d'),
+        email_settings=normalize_email_settings(client_name, client_data) if send_email else None,
+        job_id=job_id,
     )
 
-    return {"status": "triggered", "days": 90}
+    return {
+        "status": "triggered",
+        "job_id": job_id,
+        "days": resolved_days,
+        "start_date": resolved_start.strftime('%Y-%m-%d'),
+        "end_date": resolved_end.strftime('%Y-%m-%d'),
+    }
 
 @app.function(
     schedule=modal.Cron("0 18 * * *"),  # 2 AM Malaysia Time

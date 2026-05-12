@@ -166,7 +166,7 @@ export default function Home() {
       totalSpend,
       totalConversions,
       blendedCPA: totalConversions > 0 ? totalSpend / totalConversions : 0,
-      blendedROAS: data.metrics.blendedROAS,
+      blendedROAS: 0,
       spendDelta: data.metrics.spendDelta, // Keep global deltas for now
       cpaDelta: data.metrics.cpaDelta,
       dateRange: data.metrics.dateRange,
@@ -179,7 +179,7 @@ export default function Home() {
   const totalSpendForROAS = filteredCampaigns.reduce((sum, c) => sum + (c.spend || 0), 0);
   const computedROAS = totalConversionValue > 0 && totalSpendForROAS > 0
     ? totalConversionValue / totalSpendForROAS
-    : (dynamicMetrics.blendedROAS ?? 0);
+    : platformFilter === "All" ? (data.metrics.blendedROAS ?? 0) : 0;
   const metricsWithROAS = { ...dynamicMetrics, blendedROAS: computedROAS };
 
   // Anomaly detection

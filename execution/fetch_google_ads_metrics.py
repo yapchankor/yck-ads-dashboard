@@ -1012,7 +1012,7 @@ def main():
         "date_range": {
             "start_date": args.start_date,
             "end_date": args.end_date,
-            "days": (datetime.strptime(args.end_date, "%Y-%m-%d") - datetime.strptime(args.start_date, "%Y-%m-%d")).days
+            "days": max(1, (datetime.strptime(args.end_date, "%Y-%m-%d") - datetime.strptime(args.start_date, "%Y-%m-%d")).days + 1)
         },
         "summary": {
             "total_campaigns": len(campaigns),

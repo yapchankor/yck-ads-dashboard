@@ -820,7 +820,7 @@ def main():
         end_date = args.end_date
     else:
         end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=args.days)).strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=max(args.days - 1, 0))).strftime('%Y-%m-%d')
 
     print(f"\n{'='*70}")
     print(f"FACEBOOK ADS METRICS FETCH")
@@ -872,6 +872,7 @@ def main():
         'date_range': {
             'start_date': start_date,
             'end_date': end_date,
+            'days': max(1, (datetime.strptime(end_date, '%Y-%m-%d') - datetime.strptime(start_date, '%Y-%m-%d')).days + 1),
         },
         'fetched_at': datetime.now().isoformat(),
         'summary': summary,

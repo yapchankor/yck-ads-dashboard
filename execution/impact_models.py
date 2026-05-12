@@ -419,7 +419,7 @@ def get_automation_metadata(rec_type, platform='facebook'):
 
     google_auto = {
         'keyword_action', 'bid_adjustment', 'schedule_bid_adjustment',
-        'geo_bid_adjustment', 'geo_exclusion', 'ad_copy'
+        'geo_bid_adjustment', 'device_bid_adjustment', 'geo_exclusion'
     }
 
     google_manual_reasons = {

@@ -212,18 +212,20 @@ export default function GoogleAdsPage() {
   const [refreshingRange, setRefreshingRange] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [ignoredQueries, setIgnoredQueries] = useState<Set<string>>(new Set());
+  const [ignoredQueries, setIgnoredQueries] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+
+    try {
+      const stored = localStorage.getItem("ignored_queries");
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   const [queryActions, setQueryActions] = useState<Record<string, "applying" | "applied" | "error">>({});
   const [keywordFilter, setKeywordFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
   const [queryFilter, setQueryFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
   const [adGroupFilter, setAdGroupFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem("ignored_queries");
-      if (stored) setIgnoredQueries(new Set(JSON.parse(stored)));
-    } catch {}
-  }, []);
 
   useEffect(() => {
     fetchDashboardData()
@@ -233,19 +235,35 @@ export default function GoogleAdsPage() {
 
   async function applyNegativeKeyword(keyword: string, campaignId: string, matchType = "broad") {
     const key = `${keyword}__${campaignId}`;
+    if (!campaignId) {
+      setQueryActions(prev => ({ ...prev, [key]: "error" }));
+      return;
+    }
     setQueryActions(prev => ({ ...prev, [key]: "applying" }));
     try {
-      const res = await fetch("/api/apply", {
+      const res = await fetch("/api/tracking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action_type: "add_negative_keyword",
-          platform: "google",
+          platform: "Google",
           client_name: d?.client_name,
-          recommendation_id: null,
+          recommendation_id: `direct-negative-${campaignId}-${keyword.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          title: `Add negative keyword: ${keyword}`,
+          impact: "Medium",
+          suggested_action: `Add "${keyword}" as a ${matchType.toUpperCase()} negative keyword`,
           keyword,
+          negative_keywords: [keyword],
           campaign_id: campaignId,
-          match_type: matchType,
+          match_type: matchType.toUpperCase(),
+          manual: false,
+          baseline_metrics: {
+            expected_outcome: "Reduce wasted search spend",
+            total_spend: d?.metrics?.totalSpend,
+            total_conversions: d?.metrics?.totalConversions,
+            blended_cpa: d?.metrics?.blendedCPA,
+            blended_roas: d?.metrics?.blendedROAS,
+          },
         }),
       });
       if (!res.ok) throw new Error();
@@ -800,7 +818,7 @@ export default function GoogleAdsPage() {
                             <span className="text-[10px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded">Failed</span>
                           ) : (
                             <button
-                              disabled={actionState === "applying"}
+                              disabled={actionState === "applying" || !campaignId}
                               onClick={() => applyNegativeKeyword(row.search_term, campaignId)}
                               className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 transition-colors"
                             >
