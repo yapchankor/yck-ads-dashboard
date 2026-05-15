@@ -36,8 +36,8 @@ export function parseDateInput(value: string) {
   return parsed;
 }
 
-export function getPresetRange(days: number): DateRangeSelection {
-  const end = new Date();
+export function getPresetRange(days: number, anchorDate?: string): DateRangeSelection {
+  const end = anchorDate ? parseDateInput(anchorDate) ?? new Date() : new Date();
   const start = new Date(end);
   start.setDate(end.getDate() - days + 1);
 
@@ -76,6 +76,10 @@ export function formatRangeLabel(range: DashboardDateRange | DateRangeSelection)
 
   if (normalized.label && normalized.label !== "Custom Range") {
     return normalized.label;
+  }
+
+  if (normalized.days && [7, 30, 90].includes(normalized.days)) {
+    return `Last ${normalized.days} Days`;
   }
 
   const matchingPreset = [7, 30, 90].find((days) => {

@@ -1,58 +1,18 @@
 "use client";
 
 import React, { useState } from "react";
-import { DashboardMetrics, Recommendation } from "@/lib/types";
-import { CheckCircle2, XCircle, Zap, Loader2, Target, TrendingUp, Wrench, AlertCircle, Layers } from "lucide-react";
+import { AlertCircle, CheckCircle2, Layers, Target, TrendingUp, Wrench, XCircle, Zap } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { ActionDrawer } from "@/components/ui/ActionDrawer";
+import { ACTION_TYPE_LABELS } from "@/lib/action-types";
+import { ActionPreview, DashboardMetrics, Recommendation } from "@/lib/types";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type CardStatus = "pending" | "applying" | "applied" | "manual_confirmed" | "dismissed";
-
-type ApplyResult = {
-  status?: string;
-  execution_status?: string;
-  message?: string;
-  error?: string;
-  detail?: string | Array<{ loc?: Array<string | number>; msg?: string }>;
-  tracking_record?: {
-    status?: string;
-    execution_status?: string;
-  };
-};
-
-const ACTION_TYPE_LABELS: Record<string, string> = {
-  add_negative_keyword: "Add Negative Keyword",
-  budget_adjustment: "Budget Adjustment",
-  bid_adjustment: "Bid Adjustment",
-  budget_scaling: "Budget Scaling",
-  creative_test: "Creative Test",
-  objective_mismatch: "Objective Mismatch",
-  audience_fatigue: "Audience Fatigue",
-  creative_refresh: "Creative Refresh",
-  schedule_adjustment: "Schedule Adjustment",
-  day_schedule: "Day Schedule",
-  placement_exclusion: "Placement Exclusion",
-  audience_exclusion: "Audience Exclusion",
-  geo_exclusion: "Geo Exclusion",
-  geo_scaling: "Geo Scaling",
-  campaign_review: "Campaign Review",
-  a_b_test: "A/B Test",
-  keyword_action: "Keyword Action",
-  schedule_bid_adjustment: "Schedule Bid Adjustment",
-  geo_bid_adjustment: "Geo Bid Adjustment",
-  device_bid_adjustment: "Device Bid Adjustment",
-  quality_improvement: "Quality Improvement",
-  ad_copy: "Ad Copy",
-  pause: "Pause",
-  scale_budget: "Scale Budget",
-  review: "Review",
-  switch_objective: "Switch Objective",
-  review_overspend: "Review Overspend",
-};
+type CardStatus = "pending" | "applied" | "manual_confirmed" | "dismissed";
 
 const QUALITY_STYLES: Record<string, string> = {
   "High confidence": "bg-green-50 text-green-700 border-green-100",
@@ -60,6 +20,70 @@ const QUALITY_STYLES: Record<string, string> = {
   "Manual only": "bg-amber-50 text-amber-700 border-amber-100",
   "Insufficient data": "bg-gray-50 text-gray-600 border-gray-100",
 };
+
+function formatMyr(value: number) {
+  return new Intl.NumberFormat("en-MY", {
+    style: "currency",
+    currency: "MYR",
+  }).format(value);
+}
+
+function recommendationToAction(rec: Recommendation): ActionPreview {
+  return {
+    id: rec.id,
+    title: rec.title,
+    platform: rec.platform,
+    actionType: rec.actionType,
+    impact: rec.impact,
+    targetLabel: rec.keyword || rec.ad_name || rec.segment || rec.placement || rec.location || rec.campaignName,
+    targetId: rec.target_id || null,
+    targetType: rec.keyword ? "Keyword" : rec.ad_name ? "Ad" : rec.adset_id ? "Ad Set" : rec.campaignName ? "Campaign" : "Target",
+    campaignName: rec.campaignName,
+    campaignId: rec.campaign_id,
+    adGroupName: rec.ad_group_name,
+    adsetId: rec.adset_id,
+    adName: rec.ad_name,
+    adId: rec.ad_id,
+    keyword: rec.keyword,
+    negativeKeywords: rec.negative_keywords,
+    matchType: rec.match_type,
+    segment: rec.segment,
+    segmentType: rec.segment_type,
+    placement: rec.placement,
+    location: rec.location,
+    locationKey: rec.location_key,
+    locationType: rec.location_type,
+    locationId: rec.location_id,
+    device: rec.device,
+    timeSlot: rec.time_slot,
+    bestHours: rec.best_hours,
+    wastedDays: rec.wasted_days,
+    campaignIds: rec.campaign_ids,
+    currentValue: rec.current || (rec.current_bid ? formatMyr(rec.current_bid) : rec.current_budget ? formatMyr(rec.current_budget) : null),
+    proposedValue: rec.suggested || rec.suggestedAction || (rec.suggested_bid ? formatMyr(rec.suggested_bid) : rec.suggested_adjustment),
+    currentBid: rec.current_bid,
+    suggestedBid: rec.suggested_bid,
+    currentBudget: rec.current_budget,
+    budgetBasis: rec.budget_basis,
+    suggestedAdjustment: rec.suggested_adjustment,
+    currentCpa: rec.current_cpa,
+    currentSpend: rec.current_spend,
+    currentPerformance: rec.current_performance,
+    reason: rec.description,
+    suggestedAction: rec.suggestedAction,
+    expectedImpact: rec.expectedImpact,
+    formula: rec.formula,
+    manualPath: rec.how_to_apply,
+    normalizedKey: rec.normalized_key,
+    qualityLabel: rec.quality_label,
+    confidenceScore: rec.confidence_score,
+    guardrailStatus: rec.guardrail_status,
+    guardrailReasons: rec.guardrail_reasons,
+    evidence: rec.evidence,
+    automationAllowed: rec.automation_allowed,
+    manualOnly: rec.isManualOnly,
+  };
+}
 
 export function RecommendationCard({
   recommendation: rec,
@@ -73,13 +97,20 @@ export function RecommendationCard({
   const [cardStatus, setCardStatus] = useState<CardStatus>(
     rec.status === "Completed" ? "applied" : "pending"
   );
-  const [error, setError] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const isGoogle = rec.platform === "Google";
   const isMeta = rec.platform === "Meta";
   const qualityLabel = rec.quality_label || (rec.isManualOnly ? "Manual only" : "High confidence");
   const canAutoApply = rec.automation_allowed === true && rec.guardrail_status === "eligible" && !rec.isManualOnly;
   const actionStatusLabel = canAutoApply ? "Auto" : qualityLabel === "Needs review" ? "Needs review" : "Manual";
+  const isDone = cardStatus === "applied" || cardStatus === "manual_confirmed" || cardStatus === "dismissed";
+  const actionLabel = ACTION_TYPE_LABELS[rec.actionType] || rec.actionType;
+  const targetGroupLabel = isMeta ? "Ad Set" : "Ad Group";
+  const bidChangePct = rec.current_bid && rec.suggested_bid
+    ? ((rec.suggested_bid - rec.current_bid) / rec.current_bid) * 100
+    : null;
+  const actionPreview = recommendationToAction(rec);
 
   const impactColor = rec.impact === "High"
     ? "bg-red-100 text-red-600"
@@ -99,435 +130,238 @@ export function RecommendationCard({
     ? "bg-purple-50 text-purple-700"
     : "bg-teal-50 text-teal-700";
 
-  const getApplyErrorMessage = (result: unknown) => {
-    if (!result || typeof result !== "object") return "Failed to apply recommendation";
-
-    const response = result as ApplyResult;
-
-    if (response.error) return response.error;
-    if (response.execution_status) return response.execution_status;
-    if (typeof response.detail === "string") return response.detail;
-    if (Array.isArray(response.detail)) {
-      const details = response.detail
-        .map((item) => {
-          const location = item.loc?.slice(1).join(".");
-          return location && item.msg ? `${location}: ${item.msg}` : item.msg;
-        })
-        .filter(Boolean)
-        .join("; ");
-      if (details) return details;
-    }
-
-    return "Failed to apply recommendation";
-  };
-
-  // Shared implementation logic (for both Auto and Manual)
-  const recordImplementation = async (isManual: boolean, statusOverride?: "Dismissed") => {
-    if (!clientName) {
-      setError("Client is not configured for this action.");
-      return;
-    }
-
-    setCardStatus(isManual ? "manual_confirmed" : "applying");
-    setError(null);
-    try {
-      const response = await fetch("/api/tracking", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_name: clientName,
-          recommendation_id: rec.id,
-          title: rec.title,
-          action_type: rec.actionType,
-          platform: rec.platform,
-          impact: rec.impact,
-          suggested_action: rec.suggestedAction,
-          target_id: rec.target_id, 
-          campaign_id: rec.campaign_id,
-          adset_id: rec.adset_id,
-          ad_id: rec.ad_id,
-          ad_name: rec.ad_name,
-          segment: rec.segment,
-          segment_type: rec.segment_type,
-          placement: rec.placement,
-          location: rec.location,
-          location_key: rec.location_key,
-          location_id: rec.location_id,
-          location_type: rec.location_type,
-          best_hours: rec.best_hours,
-          wasted_days: rec.wasted_days,
-          campaign_ids: rec.campaign_ids,
-          device: rec.device,
-          suggested_adjustment: rec.suggested_adjustment,
-          time_slot: rec.time_slot,
-          current_cpa: rec.current_cpa,
-          current_spend: rec.current_spend,
-          current_performance: rec.current_performance,
-          keyword: rec.keyword,
-          negative_keywords: rec.negative_keywords,
-          match_type: rec.match_type,
-          suggested_bid: rec.suggested_bid,
-          current_budget: rec.current_budget,
-          budget_basis: rec.budget_basis,
-          manual: isManual,
-          status: statusOverride,
-          baseline_metrics: {
-             expected_outcome: rec.expectedImpact || "Improved Performance",
-             total_spend: baselineMetrics?.totalSpend,
-             total_conversions: baselineMetrics?.totalConversions,
-             blended_cpa: baselineMetrics?.blendedCPA,
-             blended_roas: baselineMetrics?.blendedROAS,
-             spend_delta: baselineMetrics?.spendDelta,
-             cpa_delta: baselineMetrics?.cpaDelta,
-          },
-          normalized_key: rec.normalized_key,
-          quality_label: rec.quality_label,
-          confidence_score: rec.confidence_score,
-          guardrail_status: rec.guardrail_status,
-          guardrail_reasons: rec.guardrail_reasons,
-          evidence: rec.evidence,
-          expected_impact: rec.expectedImpact,
-        }),
-      });
-      
-      const result = await response.json();
-      if (response.ok) {
-        const applyResult = result as ApplyResult;
-        const trackingStatus = applyResult.tracking_record?.status;
-        const hasTrackingRecord = Boolean(applyResult.tracking_record);
-
-        if (result.status === "manual_required") {
-          if (trackingStatus === "Tracking" || trackingStatus === "Completed") {
-            setCardStatus("manual_confirmed");
-          } else {
-            setError("Manual action was not recorded in Outcome Tracking.");
-            setCardStatus("pending");
-          }
-        } else if (result.status === "dismissed") {
-          if (trackingStatus === "Dismissed") {
-            setCardStatus("dismissed");
-          } else {
-            setError("Dismissal was not recorded in Outcome Tracking.");
-            setCardStatus("pending");
-          }
-        } else if (result.status === "error") {
-          setError(result.execution_status || "Execution failed");
-          setCardStatus("pending");
-        } else if (result.status === "already_tracking") {
-          setError(result.message || "This recommendation is already in Outcome Tracking.");
-          setCardStatus("pending");
-        } else if ((result.status === "applied" || result.status === "tracked") && hasTrackingRecord) {
-          if (trackingStatus === "Tracking" || trackingStatus === "Completed") {
-            setCardStatus("applied");
-          } else {
-            setError(applyResult.tracking_record?.execution_status || "Action was not recorded as tracking.");
-            setCardStatus("pending");
-          }
-        } else {
-          setError("Apply response did not include a valid tracking record.");
-          setCardStatus("pending");
-        }
-      } else {
-        setError(getApplyErrorMessage(result));
-        setCardStatus("pending");
-      }
-    } catch {
-      setError(`Could not record ${isManual ? 'implementation' : 'application'}. Please try again.`);
-      setCardStatus("pending");
-    }
-  };
-
-  // "Apply Now" — calls the tracking endpoint (automated actions)
-  const handleApply = () => {
-    if (!confirm(`Apply this ${rec.platform} recommendation now? This may change the live ad account.`)) {
-      return;
-    }
-    recordImplementation(false);
-  };
-
-  // "Mark as Implemented" — for manual actions
-  const handleManualConfirm = () => recordImplementation(true);
-
-  // "Dismiss" — not relevant / already done another way
-  const handleDismiss = () => recordImplementation(true, "Dismissed");
-
-  const isDone = cardStatus === "applied" || cardStatus === "manual_confirmed" || cardStatus === "dismissed";
-
-  const actionLabel = ACTION_TYPE_LABELS[rec.actionType] || rec.actionType;
-  const targetGroupLabel = isMeta ? "Ad Set" : "Ad Group";
-  const bidChangePct = rec.current_bid && rec.suggested_bid
-    ? ((rec.suggested_bid - rec.current_bid) / rec.current_bid) * 100
-    : null;
-  const formatBid = (value: number) => new Intl.NumberFormat("en-MY", {
-    style: "currency",
-    currency: "MYR",
-  }).format(value);
-  const primaryActionLabel = rec.actionType === "bid_adjustment" ? "Apply Bid Change" : "Apply Now";
-
   return (
-    <div className={cn(
-      "bg-surface shadow-sm rounded-2xl border border-border/40 border-l-4 flex flex-col transition-all",
-      platformColor,
-      isDone ? "opacity-55 grayscale-[0.3]" : "hover:shadow-md hover:-translate-y-0.5"
-    )}>
-      {/* ── Header ── */}
-      <div className="px-5 pt-5 pb-3">
-        <div className="flex items-start gap-2 justify-between mb-3">
-          <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0", platformBadgeColor)}>
-            {rec.platform}
-          </span>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1", impactColor)}>
-              <Zap className="w-3 h-3" /> {rec.impact}
+    <>
+      <div className={cn(
+        "flex flex-col rounded-2xl border border-border/40 border-l-4 bg-surface shadow-sm transition-all",
+        platformColor,
+        isDone ? "opacity-55 grayscale-[0.3]" : "hover:-translate-y-0.5 hover:shadow-md",
+      )}>
+        <div className="px-5 pb-3 pt-5">
+          <div className="mb-3 flex items-start justify-between gap-2">
+            <span className={cn("shrink-0 rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider", platformBadgeColor)}>
+              {rec.platform}
+            </span>
+            <span className={cn("flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold", impactColor)}>
+              <Zap className="h-3 w-3" /> {rec.impact}
             </span>
           </div>
+
+          <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
+            <Wrench className="h-3 w-3" /> {actionLabel}
+          </p>
+
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold",
+              QUALITY_STYLES[qualityLabel] || QUALITY_STYLES["Needs review"],
+            )}>
+              <AlertCircle className="h-3 w-3" />
+              {actionStatusLabel}
+              {typeof rec.confidence_score === "number" ? ` - ${Math.round(rec.confidence_score)}%` : ""}
+            </span>
+          </div>
+
+          <h3 className="line-clamp-3 break-words text-sm font-bold leading-snug text-foreground">
+            {rec.title}
+          </h3>
         </div>
 
-        {/* Action type label */}
-        <p className="text-[10px] font-semibold text-text-muted uppercase tracking-widest mb-1.5 flex items-center gap-1">
-          <Wrench className="w-3 h-3" /> {actionLabel}
-        </p>
-
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <span className={cn(
-            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold",
-            QUALITY_STYLES[qualityLabel] || QUALITY_STYLES["Needs review"]
-          )}>
-            <AlertCircle className="h-3 w-3" />
-            {actionStatusLabel}
-            {typeof rec.confidence_score === "number" ? ` - ${Math.round(rec.confidence_score)}%` : ""}
-          </span>
-        </div>
-
-        {/* Title — clamped, never overflows */}
-        <h3 className="text-sm font-bold text-foreground leading-snug line-clamp-3 break-words">
-          {rec.title}
-        </h3>
-      </div>
-
-      {/* ── Detail sections ── */}
-      <div className="px-5 pb-4 flex flex-col gap-2.5 flex-1">
-
-        {/* Campaign context */}
-        {rec.campaignName && (
-          <div className="flex items-start gap-2">
-            <Target className="w-3.5 h-3.5 text-text-muted shrink-0 mt-0.5" />
-            <p className="text-xs text-text-muted break-words leading-snug">
-              <span className="font-semibold text-foreground">Campaign: </span>{rec.campaignName}
-            </p>
-          </div>
-        )}
-
-        {/* Ad Group context */}
-        {rec.ad_group_name && rec.ad_group_name !== "Unknown" && (
-          <div className="flex items-start gap-2">
-            <Layers className="w-3.5 h-3.5 text-text-muted shrink-0 mt-0.5" />
-            <p className="text-xs text-text-muted break-words leading-snug">
-              <span className="font-semibold text-foreground">{targetGroupLabel}: </span>{rec.ad_group_name}
-            </p>
-          </div>
-        )}
-
-        {/* Keyword (for negative keyword actions) */}
-        {rec.keyword && (
-          <div className="bg-surface-hover rounded-lg px-3 py-2">
-            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-0.5">Keyword</p>
-            <p className="text-xs font-medium text-foreground break-all">&ldquo;{rec.keyword}&rdquo;</p>
-          </div>
-        )}
-
-        {rec.negative_keywords && rec.negative_keywords.length > 0 && (
-          <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-            <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wide mb-1">Negative Keywords</p>
-            <p className="text-xs text-amber-800 leading-relaxed break-words">
-              {rec.negative_keywords.map((keyword) => `-${keyword}`).join(", ")}
-              {rec.match_type ? ` (${rec.match_type})` : ""}
-            </p>
-          </div>
-        )}
-
-        {/* Bid change detail */}
-        {rec.actionType === "bid_adjustment" && rec.current_bid && rec.suggested_bid && (
-          <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-            <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wide mb-2">Bid Change</p>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div>
-                <p className="text-[10px] text-text-muted uppercase font-semibold">Current</p>
-                <p className="font-bold text-foreground">{formatBid(rec.current_bid)}</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-text-muted uppercase font-semibold">Suggested</p>
-                <p className="font-bold text-blue-700">{formatBid(rec.suggested_bid)}</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-text-muted uppercase font-semibold">Change</p>
-                <p className={cn("font-bold", bidChangePct && bidChangePct > 0 ? "text-blue-700" : "text-amber-700")}>
-                  {bidChangePct !== null ? `${bidChangePct >= 0 ? "+" : ""}${bidChangePct.toFixed(1)}%` : "-"}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {(rec.time_slot || rec.location || rec.device || rec.suggested_adjustment || rec.current_cpa || rec.current_spend || rec.current_performance) && (
-          <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-            <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wide mb-2">Adjustment Detail</p>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              {rec.time_slot && (
-                <div>
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Time</p>
-                  <p className="font-bold text-foreground">{rec.time_slot}</p>
-                </div>
-              )}
-              {rec.location && (
-                <div>
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Location</p>
-                  <p className="font-bold text-foreground">{rec.location}</p>
-                </div>
-              )}
-              {rec.suggested_adjustment && (
-                <div>
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Adjustment</p>
-                  <p className="font-bold text-blue-700">{rec.suggested_adjustment}</p>
-                </div>
-              )}
-              {rec.device && (
-                <div>
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Device</p>
-                  <p className="font-bold text-foreground">{rec.device.replace(/_/g, " ")}</p>
-                </div>
-              )}
-              {typeof rec.current_cpa === "number" && (
-                <div>
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Current CPA</p>
-                  <p className="font-bold text-foreground">{formatBid(rec.current_cpa)}</p>
-                </div>
-              )}
-              {typeof rec.current_spend === "number" && (
-                <div>
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Spend</p>
-                  <p className="font-bold text-foreground">{formatBid(rec.current_spend)}</p>
-                </div>
-              )}
-              {rec.current_performance && (
-                <div className="col-span-2">
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Current Performance</p>
-                  <p className="font-bold text-foreground">{rec.current_performance}</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Why — the reason */}
-        <div>
-          <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-0.5">Why</p>
-          <p className="text-xs text-text-muted leading-relaxed">{rec.description}</p>
-        </div>
-
-        {/* What to do */}
-        {rec.suggestedAction && (
-          <div>
-            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-0.5">What to do</p>
-            <p className="text-xs text-foreground leading-relaxed font-medium">{rec.suggestedAction}</p>
-          </div>
-        )}
-
-        {/* Expected outcome */}
-        {rec.expectedImpact && (
-          <div className="bg-green-50 border border-green-100 rounded-lg px-3 py-2 flex items-start gap-2">
-            <TrendingUp className="w-3.5 h-3.5 text-green-600 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-[10px] font-bold text-green-700 uppercase tracking-wide mb-0.5">Expected Outcome</p>
-              <p className="text-xs text-green-700 leading-relaxed">{rec.expectedImpact}</p>
-            </div>
-          </div>
-        )}
-
-        {rec.formula && (
-          <div className="bg-surface-hover border border-border/50 rounded-lg px-3 py-2">
-            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-0.5">Calculation</p>
-            <p className="text-xs text-text-muted leading-relaxed">{rec.formula}</p>
-          </div>
-        )}
-
-        {rec.how_to_apply && (
-          <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-            <p className="text-[10px] font-semibold text-blue-700 uppercase tracking-wide mb-0.5">Manual Path</p>
-            <p className="text-xs text-blue-800 leading-relaxed">{rec.how_to_apply}</p>
-          </div>
-        )}
-
-        {/* Manual-only notice */}
-        {(rec.isManualOnly || !canAutoApply) && cardStatus === "pending" && (
-          <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="text-[10px] text-amber-700 leading-snug font-medium">
-                {qualityLabel === "Needs review" ? "Needs review before changing the ad account." : "Why manual?"}
+        <div className="flex flex-1 flex-col gap-2.5 px-5 pb-4">
+          {rec.campaignName && (
+            <div className="flex items-start gap-2">
+              <Target className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted" />
+              <p className="break-words text-xs leading-snug text-text-muted">
+                <span className="font-semibold text-foreground">Campaign: </span>{rec.campaignName}
               </p>
-              {(rec.guardrail_reasons || []).slice(0, 2).map((reason) => (
-                <p key={reason} className="text-[10px] text-amber-700/80 leading-snug">{reason}</p>
-              ))}
             </div>
+          )}
+
+          {rec.ad_group_name && rec.ad_group_name !== "Unknown" && (
+            <div className="flex items-start gap-2">
+              <Layers className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted" />
+              <p className="break-words text-xs leading-snug text-text-muted">
+                <span className="font-semibold text-foreground">{targetGroupLabel}: </span>{rec.ad_group_name}
+              </p>
+            </div>
+          )}
+
+          {rec.keyword && (
+            <div className="rounded-lg bg-surface-hover px-3 py-2">
+              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Keyword</p>
+              <p className="break-all text-xs font-medium text-foreground">&ldquo;{rec.keyword}&rdquo;</p>
+            </div>
+          )}
+
+          {rec.negative_keywords && rec.negative_keywords.length > 0 && (
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">Negative Keywords</p>
+              <p className="break-words text-xs leading-relaxed text-amber-800">
+                {rec.negative_keywords.map((keyword) => `-${keyword}`).join(", ")}
+                {rec.match_type ? ` (${rec.match_type})` : ""}
+              </p>
+            </div>
+          )}
+
+          {rec.actionType === "bid_adjustment" && rec.current_bid && rec.suggested_bid && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-blue-700">Bid Change</p>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase text-text-muted">Current</p>
+                  <p className="font-bold text-foreground">{formatMyr(rec.current_bid)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase text-text-muted">Suggested</p>
+                  <p className="font-bold text-blue-700">{formatMyr(rec.suggested_bid)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase text-text-muted">Change</p>
+                  <p className={cn("font-bold", bidChangePct && bidChangePct > 0 ? "text-blue-700" : "text-amber-700")}>
+                    {bidChangePct !== null ? `${bidChangePct >= 0 ? "+" : ""}${bidChangePct.toFixed(1)}%` : "-"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(rec.time_slot || rec.location || rec.device || rec.suggested_adjustment || rec.current_cpa || rec.current_spend || rec.current_performance) && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-blue-700">Adjustment Detail</p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {rec.time_slot && <Detail label="Time" value={rec.time_slot} />}
+                {rec.location && <Detail label="Location" value={rec.location} />}
+                {rec.suggested_adjustment && <Detail label="Adjustment" value={rec.suggested_adjustment} strongClass="text-blue-700" />}
+                {rec.device && <Detail label="Device" value={rec.device.replace(/_/g, " ")} />}
+                {typeof rec.current_cpa === "number" && <Detail label="Current CPA" value={formatMyr(rec.current_cpa)} />}
+                {typeof rec.current_spend === "number" && <Detail label="Spend" value={formatMyr(rec.current_spend)} />}
+                {rec.current_performance && (
+                  <div className="col-span-2">
+                    <p className="text-[10px] font-semibold uppercase text-text-muted">Current Performance</p>
+                    <p className="font-bold text-foreground">{rec.current_performance}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Why</p>
+            <p className="text-xs leading-relaxed text-text-muted">{rec.description}</p>
           </div>
-        )}
+
+          {rec.suggestedAction && (
+            <div>
+              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">What to do</p>
+              <p className="text-xs font-medium leading-relaxed text-foreground">{rec.suggestedAction}</p>
+            </div>
+          )}
+
+          {rec.expectedImpact && (
+            <div className="flex items-start gap-2 rounded-lg border border-green-100 bg-green-50 px-3 py-2">
+              <TrendingUp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-600" />
+              <div>
+                <p className="mb-0.5 text-[10px] font-bold uppercase tracking-wide text-green-700">Expected Outcome</p>
+                <p className="text-xs leading-relaxed text-green-700">{rec.expectedImpact}</p>
+              </div>
+            </div>
+          )}
+
+          {rec.formula && (
+            <div className="rounded-lg border border-border/50 bg-surface-hover px-3 py-2">
+              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Calculation</p>
+              <p className="text-xs leading-relaxed text-text-muted">{rec.formula}</p>
+            </div>
+          )}
+
+          {rec.how_to_apply && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">Manual Path</p>
+              <p className="text-xs leading-relaxed text-blue-800">{rec.how_to_apply}</p>
+            </div>
+          )}
+
+          {(rec.isManualOnly || !canAutoApply) && cardStatus === "pending" && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+              <div className="space-y-1">
+                <p className="text-[10px] font-medium leading-snug text-amber-700">
+                  {qualityLabel === "Needs review" ? "Needs review before changing the ad account." : "Why manual?"}
+                </p>
+                {(rec.guardrail_reasons || []).slice(0, 2).map((reason) => (
+                  <p key={reason} className="text-[10px] leading-snug text-amber-700/80">{reason}</p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 pb-5">
+          {cardStatus === "applied" && (
+            <DoneState icon={<CheckCircle2 className="h-4 w-4" />} label="Applied Automatically" />
+          )}
+          {cardStatus === "manual_confirmed" && (
+            <DoneState icon={<CheckCircle2 className="h-4 w-4" />} label="Marked as Implemented" />
+          )}
+          {cardStatus === "dismissed" && (
+            <div className="flex items-center gap-2 rounded-xl bg-surface-hover px-4 py-2.5 text-sm font-medium text-text-muted">
+              <XCircle className="h-4 w-4" /> Dismissed
+            </div>
+          )}
+
+          {!isDone && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setDrawerOpen(true)}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-accent-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-accent-primary/90"
+              >
+                {canAutoApply ? primaryActionLabel(rec.actionType) : <><CheckCircle2 className="h-4 w-4" /> Mark as Implemented</>}
+              </button>
+              <button
+                onClick={() => setDrawerOpen(true)}
+                className="rounded-xl border border-border/50 bg-surface-hover p-2.5 text-text-muted transition-colors hover:border-red-200 hover:text-red-500"
+                title="Dismiss this recommendation"
+              >
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* ── Action buttons ── */}
-      <div className="px-5 pb-5">
-        {error && <p className="text-[10px] text-red-500 font-bold mb-2">{error}</p>}
+      <ActionDrawer
+        action={actionPreview}
+        clientName={clientName}
+        baselineMetrics={baselineMetrics}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        onApplied={() => setCardStatus("applied")}
+        onManual={() => setCardStatus("manual_confirmed")}
+        onDismissed={() => setCardStatus("dismissed")}
+      />
+    </>
+  );
+}
 
-        {cardStatus === "applied" && (
-          <div className="flex items-center gap-2 bg-green-50 text-green-700 rounded-xl px-4 py-2.5 text-sm font-bold">
-            <CheckCircle2 className="w-4 h-4" /> Applied Automatically
-          </div>
-        )}
-        {cardStatus === "manual_confirmed" && (
-          <div className="flex items-center gap-2 bg-green-50 text-green-700 rounded-xl px-4 py-2.5 text-sm font-bold">
-            <CheckCircle2 className="w-4 h-4" /> Marked as Implemented
-          </div>
-        )}
-        {cardStatus === "dismissed" && (
-          <div className="flex items-center gap-2 bg-surface-hover text-text-muted rounded-xl px-4 py-2.5 text-sm font-medium">
-            <XCircle className="w-4 h-4" /> Dismissed
-          </div>
-        )}
-
-        {!isDone && (
-          <div className="flex items-center gap-2">
-            {/* For manual-only actions: show "Mark as Implemented" as the primary CTA */}
-            {!canAutoApply ? (
-              <button
-                onClick={handleManualConfirm}
-                className="flex-1 bg-accent-primary hover:bg-accent-primary/90 text-white text-sm font-semibold py-2.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm"
-              >
-                <CheckCircle2 className="w-4 h-4" /> Mark as Implemented
-              </button>
-            ) : (
-              <button
-                onClick={handleApply}
-                disabled={cardStatus === "applying"}
-                className="flex-1 bg-accent-primary hover:bg-accent-primary/90 text-white text-sm font-semibold py-2.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-60"
-              >
-                {cardStatus === "applying"
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Applying...</>
-                  : primaryActionLabel
-                }
-              </button>
-            )}
-
-            {/* Dismiss button — always available */}
-            <button
-              onClick={handleDismiss}
-              className="p-2.5 rounded-xl bg-surface-hover border border-border/50 text-text-muted hover:text-red-500 hover:border-red-200 transition-colors"
-              title="Dismiss this recommendation"
-            >
-              <XCircle className="w-5 h-5" />
-            </button>
-          </div>
-        )}
-      </div>
+function Detail({ label, value, strongClass }: { label: string; value: string; strongClass?: string }) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase text-text-muted">{label}</p>
+      <p className={cn("font-bold text-foreground", strongClass)}>{value}</p>
     </div>
   );
+}
+
+function DoneState({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl bg-green-50 px-4 py-2.5 text-sm font-bold text-green-700">
+      {icon} {label}
+    </div>
+  );
+}
+
+function primaryActionLabel(actionType: string) {
+  if (actionType === "bid_adjustment") return "Apply Bid Change";
+  if (actionType === "budget_adjustment") return "Apply Budget Change";
+  return "Apply Now";
 }

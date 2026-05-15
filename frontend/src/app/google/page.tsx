@@ -1,9 +1,11 @@
 "use client";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ActionDrawer } from "@/components/ui/ActionDrawer";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { DateRangeSelection } from "@/lib/date-range";
 import { fetchDashboardData } from "@/lib/dashboard-refresh";
+import { ActionPreview } from "@/lib/types";
 import React, { useEffect, useState } from "react";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -67,7 +69,7 @@ const PRESET_LABELS: Record<TablePreset, string> = {
   all: "All",
 };
 
-function filterAndSortRows(rows: any[], preset: TablePreset, search: string, nameKey: string): any[] {
+function filterAndSortRows(rows: any[], preset: TablePreset, search: string, nameKey: string, requireActive = true): any[] {
   const costOf = (r: any) => Number(r.cost ?? r.spend ?? 0);
   const filtered = rows.filter((row) => {
     const status = String(row.status || "").toUpperCase();
@@ -75,9 +77,9 @@ function filterAndSortRows(rows: any[], preset: TablePreset, search: string, nam
     const cost = costOf(row);
     const conv = Number(row.conversions || 0);
 
-    if (preset === "top_spenders" && (!isActive || cost <= 0)) return false;
-    if (preset === "has_conversions" && (!isActive || conv <= 0)) return false;
-    if (preset === "no_conversions" && (!isActive || cost <= 0 || conv > 0)) return false;
+    if (preset === "top_spenders" && ((requireActive && !isActive) || cost <= 0)) return false;
+    if (preset === "has_conversions" && ((requireActive && !isActive) || conv <= 0)) return false;
+    if (preset === "no_conversions" && ((requireActive && !isActive) || cost <= 0 || conv > 0)) return false;
 
     if (search) {
       const term = search.toLowerCase();
@@ -88,6 +90,23 @@ function filterAndSortRows(rows: any[], preset: TablePreset, search: string, nam
   });
   if (preset !== "all") filtered.sort((a, b) => costOf(b) - costOf(a));
   return filtered;
+}
+
+function readableGeoSummaryLocation(value: unknown, rows: any[]) {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  if (!/^location\s+\d+$/i.test(raw)) return raw;
+
+  const id = raw.replace(/\D/g, "");
+  const match = rows.find((row) => (
+    String(row.location_id || "") === id ||
+    String(row.criterion_id || "") === id ||
+    String(row.country_criterion_id || "") === id ||
+    String(row.resource_name || "").includes(id) ||
+    String(row.criterion_resource_name || "").includes(id)
+  ));
+
+  return match?.location_name || raw;
 }
 
 function TableFilterBar({
@@ -205,6 +224,37 @@ function StatusPill({ value }: { value: unknown }) {
   return <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${className}`}>{fmtEnum(status)}</span>;
 }
 
+function RowActionButton({
+  children,
+  onClick,
+  disabled,
+  tone = "neutral",
+  title,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: "neutral" | "danger" | "positive";
+  title?: string;
+}) {
+  const toneClass = tone === "danger"
+    ? "bg-red-100 text-red-700 hover:bg-red-200"
+    : tone === "positive"
+    ? "bg-green-100 text-green-700 hover:bg-green-200"
+    : "bg-surface-hover text-text-muted hover:bg-border/40 hover:text-foreground";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`rounded px-2 py-0.5 text-[10px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${toneClass}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 // ─── page ────────────────────────────────────────────────────────────────────
 export default function GoogleAdsPage() {
   const [d, setD] = useState<any>(null);
@@ -223,6 +273,7 @@ export default function GoogleAdsPage() {
     }
   });
   const [queryActions, setQueryActions] = useState<Record<string, "applying" | "applied" | "error">>({});
+  const [actionDraft, setActionDraft] = useState<ActionPreview | null>(null);
   const [keywordFilter, setKeywordFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
   const [queryFilter, setQueryFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
   const [adGroupFilter, setAdGroupFilter] = useState<{ preset: TablePreset; search: string }>({ preset: "top_spenders", search: "" });
@@ -233,44 +284,59 @@ export default function GoogleAdsPage() {
       .catch(e => { setError(e.message); setLoading(false); });
   }, []);
 
-  async function applyNegativeKeyword(keyword: string, campaignId: string, matchType = "broad") {
-    const key = `${keyword}__${campaignId}`;
-    if (!campaignId) {
-      setQueryActions(prev => ({ ...prev, [key]: "error" }));
-      return;
-    }
-    setQueryActions(prev => ({ ...prev, [key]: "applying" }));
-    try {
-      const res = await fetch("/api/tracking", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action_type: "add_negative_keyword",
-          platform: "Google",
-          client_name: d?.client_name,
-          recommendation_id: `direct-negative-${campaignId}-${keyword.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
-          title: `Add negative keyword: ${keyword}`,
-          impact: "Medium",
-          suggested_action: `Add "${keyword}" as a ${matchType.toUpperCase()} negative keyword`,
-          keyword,
-          negative_keywords: [keyword],
-          campaign_id: campaignId,
-          match_type: matchType.toUpperCase(),
-          manual: false,
-          baseline_metrics: {
-            expected_outcome: "Reduce wasted search spend",
-            total_spend: d?.metrics?.totalSpend,
-            total_conversions: d?.metrics?.totalConversions,
-            blended_cpa: d?.metrics?.blendedCPA,
-            blended_roas: d?.metrics?.blendedROAS,
-          },
-        }),
-      });
-      if (!res.ok) throw new Error();
-      setQueryActions(prev => ({ ...prev, [key]: "applied" }));
-    } catch {
-      setQueryActions(prev => ({ ...prev, [key]: "error" }));
-    }
+  function openAction(action: ActionPreview) {
+    setActionDraft(action);
+  }
+
+  function openNegativeKeywordAction({
+    keyword,
+    campaignId,
+    campaignName,
+    adGroupName,
+    matchType = "PHRASE",
+    cost,
+    clicks,
+  }: {
+    keyword: string;
+    campaignId: string;
+    campaignName?: string;
+    adGroupName?: string;
+    matchType?: string;
+    cost?: number;
+    clicks?: number;
+  }) {
+    const normalizedMatch = String(matchType || "PHRASE").toUpperCase();
+    openAction({
+      id: `direct-negative-${campaignId}-${keyword.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      title: `Add negative keyword: ${keyword}`,
+      platform: "Google",
+      actionType: "add_negative_keyword",
+      impact: "Medium",
+      targetType: "Search term",
+      targetLabel: keyword,
+      campaignId,
+      campaignName,
+      adGroupName,
+      keyword,
+      negativeKeywords: [keyword],
+      matchType: normalizedMatch,
+      currentValue: cost != null ? `${fmtMYR(cost)} wasted spend${clicks != null ? `, ${fmt(clicks)} clicks` : ""}` : "Search term is eligible for negative keyword review",
+      proposedValue: `Add as ${normalizedMatch} negative keyword`,
+      reason: "Search term has spend with no recorded conversions.",
+      suggestedAction: `Add "${keyword}" as a ${normalizedMatch} negative keyword.`,
+      expectedImpact: "Reduce wasted search spend.",
+      automationAllowed: Boolean(campaignId),
+      guardrailStatus: campaignId ? "eligible" : "manual_only",
+      guardrailReasons: campaignId ? [] : ["Campaign ID is missing, so this negative keyword cannot be applied automatically."],
+    });
+  }
+
+  function applyNegativeKeyword(keyword: string, campaignId: string, matchType = "PHRASE") {
+    openNegativeKeywordAction({
+      keyword,
+      campaignId,
+      matchType,
+    });
   }
 
   function ignoreQuery(query: string) {
@@ -370,6 +436,7 @@ export default function GoogleAdsPage() {
   const dailyRows: any[] = Array.isArray(googleTime.daily_performance) ? googleTime.daily_performance : [];
   const deviceRows: any[] = Array.isArray(googleDevice.devices) ? googleDevice.devices : [];
   const geoSummary = d.google_geo_analysis?.summary || {};
+  const bestGeoLocationLabel = readableGeoSummaryLocation(geoSummary.best_location, geoGoogle);
 
   function classifyGCampaign(allCampaigns: any[], row: any): { text: string; color: string } | null {
     const isActive = row.status === "Active" || String(row.status || "").toUpperCase() === "ENABLED";
@@ -385,6 +452,86 @@ export default function GoogleAdsPage() {
   function findCampaignId(campaignName: string): string {
     const match = googleCampaigns.find((c: any) => c.name === campaignName);
     return match ? String(match.id || match.campaign_id || "") : "";
+  }
+
+  function openCampaignStatusAction(row: any, nextStatus: "pause" | "enable") {
+    const campaignId = String(row.id || row.campaign_id || "");
+    openAction({
+      id: `google-campaign-${nextStatus}-${campaignId}`,
+      title: `${nextStatus === "pause" ? "Pause" : "Enable"} campaign: ${row.name}`,
+      platform: "Google",
+      actionType: "campaign_action",
+      impact: nextStatus === "pause" ? "High" : "Medium",
+      targetType: "Campaign",
+      targetLabel: row.name,
+      campaignId,
+      campaignName: row.name,
+      currentValue: `Status: ${row.status || "Unknown"}`,
+      proposedValue: `Status: ${nextStatus === "pause" ? "Paused" : "Enabled"}`,
+      reason: nextStatus === "pause"
+        ? "Campaign-level pause is useful when spend should stop immediately."
+        : "Enable this campaign again from the dashboard.",
+      suggestedAction: nextStatus,
+      expectedImpact: nextStatus === "pause" ? "Stop future spend from this campaign." : "Resume campaign delivery.",
+      automationAllowed: Boolean(campaignId),
+      guardrailStatus: campaignId ? "eligible" : "manual_only",
+      guardrailReasons: campaignId ? [] : ["Campaign ID is missing."],
+    });
+  }
+
+  function openCampaignBudgetAction(row: any, direction: "increase" | "decrease") {
+    const campaignId = String(row.id || row.campaign_id || "");
+    const currentBudget = Number(row.daily_budget || 0);
+    const factor = direction === "increase" ? 1.1 : 0.9;
+    const suggestedBudget = currentBudget > 0 ? Math.max(1, Math.round(currentBudget * factor * 100) / 100) : 0;
+    openAction({
+      id: `google-campaign-budget-${direction}-${campaignId}`,
+      title: `${direction === "increase" ? "Increase" : "Decrease"} daily budget: ${row.name}`,
+      platform: "Google",
+      actionType: "budget_adjustment",
+      impact: "Medium",
+      targetType: "Campaign budget",
+      targetLabel: row.name,
+      campaignId,
+      campaignName: row.name,
+      currentValue: currentBudget > 0 ? fmtMYR(currentBudget) : "No daily budget available",
+      proposedValue: suggestedBudget > 0 ? fmtMYR(suggestedBudget) : "Budget target unavailable",
+      currentBudget,
+      suggestedBid: suggestedBudget,
+      budgetBasis: "daily_budget",
+      reason: "Controlled 10% budget adjustment from the current campaign daily budget.",
+      suggestedAction: `${direction === "increase" ? "Increase" : "Decrease"} daily budget by 10%.`,
+      expectedImpact: direction === "increase" ? "Scale delivery gradually." : "Reduce spend pressure gradually.",
+      automationAllowed: Boolean(campaignId && suggestedBudget > 0),
+      guardrailStatus: campaignId && suggestedBudget > 0 ? "eligible" : "manual_only",
+      guardrailReasons: campaignId && suggestedBudget > 0 ? [] : ["Campaign ID or current daily budget is missing."],
+    });
+  }
+
+  function openKeywordPauseAction(row: any) {
+    const targetId = row.target_id || row.resource_name;
+    openAction({
+      id: `google-keyword-pause-${String(targetId || row.keyword).replace(/[^a-zA-Z0-9]+/g, "-")}`,
+      title: `Pause keyword: ${row.keyword}`,
+      platform: "Google",
+      actionType: "keyword_action",
+      impact: Number(row.cost || 0) > 50 ? "High" : "Medium",
+      targetType: "Keyword",
+      targetLabel: row.keyword,
+      targetId,
+      campaignId: row.campaign_id,
+      campaignName: row.campaign_name || row.campaign,
+      adGroupName: row.ad_group_name,
+      keyword: row.keyword,
+      currentValue: `Status: ${row.status || "Unknown"}, Cost: ${fmtMYR(Number(row.cost || 0))}`,
+      proposedValue: "Status: Paused",
+      reason: "Pause this keyword if it is wasting spend or no longer matches the account strategy.",
+      suggestedAction: "pause",
+      expectedImpact: "Stop future spend from this keyword.",
+      automationAllowed: Boolean(targetId),
+      guardrailStatus: targetId ? "eligible" : "manual_only",
+      guardrailReasons: targetId ? [] : ["Google keyword resource ID is missing."],
+    });
   }
 
   const googleAnomalyAlerts: { severity: "warn" | "critical"; title: string; message: string; action?: string }[] = [];
@@ -425,7 +572,7 @@ export default function GoogleAdsPage() {
   const withoutConversionsG = activeCampaignsG.filter((c: any) => c.conversions === 0 && c.spend > 0);
 
   const filteredKeywords = filterAndSortRows(keywords, keywordFilter.preset, keywordFilter.search, "keyword");
-  const filteredSearchQueries = filterAndSortRows(searchQueries, queryFilter.preset, queryFilter.search, "query");
+  const filteredSearchQueries = filterAndSortRows(searchQueries, queryFilter.preset, queryFilter.search, "query", false);
   const filteredAdGroups = filterAndSortRows(adGroups, adGroupFilter.preset, adGroupFilter.search, "ad_group_name");
 
   return (
@@ -690,6 +837,25 @@ export default function GoogleAdsPage() {
               { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(asPct(v)) : "—" },
               { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
               { label: "CPA", key: "cpa", align: "right", render: (v) => v > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
+              { label: "Actions", key: "id", align: "right", render: (_v, row) => {
+                const status = String(row.status || "").toUpperCase();
+                const canPause = status === "ACTIVE" || status === "ENABLED";
+                const canEnable = status === "PAUSED";
+                return (
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    <RowActionButton
+                      tone={canPause ? "danger" : "positive"}
+                      onClick={() => openCampaignStatusAction(row, canPause ? "pause" : "enable")}
+                      disabled={!canPause && !canEnable}
+                      title={!canPause && !canEnable ? "Only active/enabled or paused campaigns can be changed here." : undefined}
+                    >
+                      {canPause ? "Pause" : "Enable"}
+                    </RowActionButton>
+                    <RowActionButton onClick={() => openCampaignBudgetAction(row, "increase")} disabled={!row.daily_budget}>+10%</RowActionButton>
+                    <RowActionButton onClick={() => openCampaignBudgetAction(row, "decrease")} disabled={!row.daily_budget}>-10%</RowActionButton>
+                  </div>
+                );
+              }},
             ]}
             rows={googleCampaigns}
           />
@@ -751,6 +917,18 @@ export default function GoogleAdsPage() {
                   ? <span className={`font-bold ${v >= 7 ? "text-green-600" : v >= 5 ? "text-amber-600" : "text-red-500"}`}>{v}/10</span>
                   : <span className="text-text-muted">—</span>
                 },
+                { label: "Actions", key: "target_id", align: "right", render: (_v, row) => (
+                  <div className="flex items-center justify-end gap-1.5">
+                    <RowActionButton
+                      tone="danger"
+                      onClick={() => openKeywordPauseAction(row)}
+                      disabled={!row.target_id && !row.resource_name}
+                      title={!row.target_id && !row.resource_name ? "Google keyword resource ID is missing." : undefined}
+                    >
+                      Pause
+                    </RowActionButton>
+                  </div>
+                )},
               ]}
               rows={filteredKeywords}
             />
@@ -782,6 +960,27 @@ export default function GoogleAdsPage() {
                 { label: "Cost", key: "cost", align: "right", render: (v) => fmtMYR(v) },
                 { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
                 { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
+                { label: "Action", key: "campaign_id", align: "right", render: (_v, row) => {
+                  const campaignId = row.campaign_id || findCampaignId(row.campaign);
+                  return (
+                    <RowActionButton
+                      tone="danger"
+                      disabled={!campaignId}
+                      onClick={() => openNegativeKeywordAction({
+                        keyword: row.query,
+                        campaignId,
+                        campaignName: row.campaign,
+                        adGroupName: row.ad_group_name,
+                        matchType: "PHRASE",
+                        cost: row.cost,
+                        clicks: row.clicks,
+                      })}
+                      title={!campaignId ? "Campaign ID is missing." : undefined}
+                    >
+                      + Negative
+                    </RowActionButton>
+                  );
+                }},
               ]}
               rows={filteredSearchQueries}
             />
@@ -909,7 +1108,7 @@ export default function GoogleAdsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
               <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Best Location</p>
-                <p className="mt-1 text-lg font-bold text-foreground">{geoSummary.best_location || "-"}</p>
+                <p className="mt-1 text-lg font-bold text-foreground">{bestGeoLocationLabel}</p>
               </div>
               <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Geo Spend</p>
@@ -1094,6 +1293,23 @@ export default function GoogleAdsPage() {
         )}
 
       </div>
+      <ActionDrawer
+        action={actionDraft}
+        clientName={d.client_name}
+        baselineMetrics={d.metrics}
+        open={Boolean(actionDraft)}
+        onClose={() => setActionDraft(null)}
+        onApplied={() => {
+          if (actionDraft?.actionType === "add_negative_keyword" && actionDraft.keyword && actionDraft.campaignId) {
+            setQueryActions((prev) => ({ ...prev, [`${actionDraft.keyword}__${actionDraft.campaignId}`]: "applied" }));
+          }
+        }}
+        onManual={() => {
+          if (actionDraft?.actionType === "add_negative_keyword" && actionDraft.keyword && actionDraft.campaignId) {
+            setQueryActions((prev) => ({ ...prev, [`${actionDraft.keyword}__${actionDraft.campaignId}`]: "applied" }));
+          }
+        }}
+      />
     </DashboardLayout>
   );
 }

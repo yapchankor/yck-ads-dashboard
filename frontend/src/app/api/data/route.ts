@@ -351,7 +351,9 @@ export async function GET(request: Request) {
       })),
       // --- Meta-specific detailed data (passed through from FB metrics) ---
       ad_sets: (data.ad_sets || []).map((a: any) => ({
+        adset_id: a.adset_id || a.id || "",
         adset_name: a.adset_name || a.name || "",
+        campaign_id: a.campaign_id || "",
         campaign_name: a.campaign_name || "",
         optimization_goal: a.optimization_goal || "",
         impressions: a.impressions || 0,
@@ -361,6 +363,9 @@ export async function GET(request: Request) {
         ctr: a.ctr || 0,
         cpa: a.cost_per_conversion || 0,
         status: a.status || "",
+        daily_budget: a.daily_budget || 0,
+        lifetime_budget: a.lifetime_budget || 0,
+        targeting_summary: a.targeting_summary || "",
       })),
       demographic_breakdown: (data.demographic_breakdown || []).map((d: any) => ({
         age: d.age,

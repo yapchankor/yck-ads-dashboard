@@ -1,9 +1,11 @@
 "use client";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ActionDrawer } from "@/components/ui/ActionDrawer";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { DateRangeSelection } from "@/lib/date-range";
 import { fetchDashboardData } from "@/lib/dashboard-refresh";
+import { ActionPreview } from "@/lib/types";
 import React, { useEffect, useState } from "react";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -137,6 +139,37 @@ function KpiStrip({ items }: { items: { label: string; value: string; sub?: stri
   );
 }
 
+function RowActionButton({
+  children,
+  onClick,
+  disabled,
+  tone = "neutral",
+  title,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: "neutral" | "danger" | "positive";
+  title?: string;
+}) {
+  const toneClass = tone === "danger"
+    ? "bg-red-100 text-red-700 hover:bg-red-200"
+    : tone === "positive"
+    ? "bg-green-100 text-green-700 hover:bg-green-200"
+    : "bg-surface-hover text-text-muted hover:bg-border/40 hover:text-foreground";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`rounded px-2 py-0.5 text-[10px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${toneClass}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 // ─── page ────────────────────────────────────────────────────────────────────
 function InsightCard({ insight }: { insight: { type: string; title: string; description: string } }) {
   const colorMap: Record<string, string> = {
@@ -153,20 +186,31 @@ function InsightCard({ insight }: { insight: { type: string; title: string; desc
   );
 }
 
-function CreativeCard({ ad }: { ad: any }) {
+function CreativeCard({ ad, onPauseAd }: { ad: any; onPauseAd?: (ad: any) => void }) {
   const hasFatigue = Number(ad.frequency) >= 3.5;
   const spend = Number(ad.spend ?? 0);
   const conv = Number(ad.conversions ?? 0);
   const explicitCpa = Number(ad.cost_per_conversion ?? ad.cpa ?? 0);
   const derivedCpa = explicitCpa > 0 ? explicitCpa : conv > 0 ? spend / conv : 0;
   const adName = ad.ad_name || ad.name || "Untitled Ad";
+  const imageUrl = String(ad.image_url || "");
+  const isLowResPreview = /(?:^|[?&])stp=[^&]*p64x64/i.test(imageUrl) || /p64x64/i.test(imageUrl);
 
   return (
     <div className="border border-border/60 rounded-xl overflow-hidden hover:shadow-sm transition-shadow flex flex-col">
-      {ad.image_url ? (
+      {imageUrl ? (
         <div className="relative aspect-video bg-surface-hover overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={ad.image_url} alt={adName} className="w-full h-full object-cover" />
+          <img
+            src={imageUrl}
+            alt={adName}
+            className={`h-full w-full ${isLowResPreview ? "object-contain bg-slate-100" : "object-cover"}`}
+          />
+          {isLowResPreview && (
+            <span className="absolute bottom-2 left-2 rounded bg-black/65 px-2 py-0.5 text-[9px] font-bold uppercase text-white">
+              Low-res Meta preview
+            </span>
+          )}
           {hasFatigue && (
             <span className="absolute top-2 right-2 bg-amber-500 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full">Fatigue</span>
           )}
@@ -201,6 +245,17 @@ function CreativeCard({ ad }: { ad: any }) {
               {Number(ad.frequency) > 0 ? Number(ad.frequency).toFixed(1) : "—"}
             </p>
           </div>
+        </div>
+        <div className="pt-2">
+          <button
+            type="button"
+            disabled={!ad.ad_id}
+            onClick={() => onPauseAd?.(ad)}
+            className="w-full rounded-lg bg-red-50 px-3 py-1.5 text-[10px] font-bold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-45"
+            title={!ad.ad_id ? "Meta ad ID is missing." : "Preview pausing this ad"}
+          >
+            Pause Ad
+          </button>
         </div>
       </div>
     </div>
@@ -338,6 +393,7 @@ export default function MetaAdsPage() {
   const [refreshingRange, setRefreshingRange] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [actionDraft, setActionDraft] = useState<ActionPreview | null>(null);
 
   useEffect(() => {
     fetchDashboardData()
@@ -434,6 +490,97 @@ export default function MetaAdsPage() {
     if (avg > 0 && (row.cpa || 0) > avg * 1.5) return { text: "High CPA", color: "bg-amber-100 text-amber-700" };
     if ((row.frequency || 0) >= 3.5) return { text: "Creative fatigue risk", color: "bg-amber-100 text-amber-700" };
     return null;
+  }
+
+  function openMetaCampaignBudgetAction(row: any, direction: "increase" | "decrease") {
+    const campaignId = String(row.id || row.campaign_id || "");
+    const currentBudget = Number(row.daily_budget || 0);
+    const factor = direction === "increase" ? 1.1 : 0.9;
+    const suggestedBudget = currentBudget > 0 ? Math.max(1, Math.round(currentBudget * factor * 100) / 100) : 0;
+    setActionDraft({
+      id: `meta-campaign-budget-${direction}-${campaignId}`,
+      title: `${direction === "increase" ? "Increase" : "Decrease"} campaign budget: ${row.name || row.campaign_name}`,
+      platform: "Meta",
+      actionType: "budget_adjustment",
+      impact: "Medium",
+      targetType: "Campaign budget",
+      targetLabel: row.name || row.campaign_name,
+      campaignId,
+      campaignName: row.name || row.campaign_name,
+      currentValue: currentBudget > 0 ? fmtMYR(currentBudget) : "No campaign daily budget available",
+      proposedValue: suggestedBudget > 0 ? fmtMYR(suggestedBudget) : "Budget target unavailable",
+      currentBudget,
+      suggestedBid: suggestedBudget,
+      budgetBasis: "daily_budget",
+      reason: "Controlled 10% Meta campaign budget adjustment.",
+      suggestedAction: `${direction === "increase" ? "Increase" : "Decrease"} daily budget by 10%.`,
+      expectedImpact: direction === "increase" ? "Scale delivery gradually." : "Reduce spend pressure gradually.",
+      automationAllowed: Boolean(campaignId && suggestedBudget > 0),
+      guardrailStatus: campaignId && suggestedBudget > 0 ? "eligible" : "manual_only",
+      guardrailReasons: campaignId && suggestedBudget > 0 ? [] : ["Campaign ID or current daily budget is missing. This campaign may use ad set budgets."],
+    });
+  }
+
+  function openMetaAdSetBudgetAction(row: any, direction: "increase" | "decrease") {
+    const adsetId = String(row.adset_id || row.id || "");
+    const currentBudget = Number(row.daily_budget || 0);
+    const factor = direction === "increase" ? 1.1 : 0.9;
+    const suggestedBudget = currentBudget > 0 ? Math.max(1, Math.round(currentBudget * factor * 100) / 100) : 0;
+    setActionDraft({
+      id: `meta-adset-budget-${direction}-${adsetId}`,
+      title: `${direction === "increase" ? "Increase" : "Decrease"} ad set budget: ${row.adset_name}`,
+      platform: "Meta",
+      actionType: "budget_adjustment",
+      impact: "Medium",
+      targetType: "Ad Set budget",
+      targetLabel: row.adset_name,
+      adsetId,
+      adsetName: row.adset_name,
+      campaignId: row.campaign_id,
+      campaignName: row.campaign_name,
+      currentValue: currentBudget > 0 ? fmtMYR(currentBudget) : "No ad set daily budget available",
+      proposedValue: suggestedBudget > 0 ? fmtMYR(suggestedBudget) : "Budget target unavailable",
+      currentBudget,
+      suggestedBid: suggestedBudget,
+      budgetBasis: "daily_budget",
+      reason: "Controlled 10% Meta ad set budget adjustment.",
+      suggestedAction: `${direction === "increase" ? "Increase" : "Decrease"} daily budget by 10%.`,
+      expectedImpact: direction === "increase" ? "Scale delivery gradually." : "Reduce spend pressure gradually.",
+      automationAllowed: Boolean(adsetId && suggestedBudget > 0),
+      guardrailStatus: adsetId && suggestedBudget > 0 ? "eligible" : "manual_only",
+      guardrailReasons: adsetId && suggestedBudget > 0 ? [] : ["Ad set ID or current daily budget is missing."],
+    });
+  }
+
+  function openMetaPauseAdAction(ad: any) {
+    const adId = String(ad.ad_id || "");
+    setActionDraft({
+      id: `meta-pause-ad-${adId}`,
+      title: `Pause ad: ${ad.ad_name || ad.name || "Untitled Ad"}`,
+      platform: "Meta",
+      actionType: "creative_refresh",
+      impact: Number(ad.frequency || 0) >= 3.5 ? "High" : "Medium",
+      targetType: "Ad",
+      targetLabel: ad.ad_name || ad.name || "Untitled Ad",
+      adId,
+      adName: ad.ad_name || ad.name,
+      adsetId: ad.adset_id,
+      adsetName: ad.adset_name,
+      campaignId: ad.campaign_id,
+      campaignName: ad.campaign_name,
+      currentValue: `Status: ${ad.status || ad.effective_status || "Unknown"}, Frequency: ${Number(ad.frequency || 0).toFixed(1)}x`,
+      proposedValue: "Status: Paused",
+      reason: Number(ad.frequency || 0) >= 3.5
+        ? "This ad is showing creative fatigue risk from high frequency."
+        : "Pause this ad if the creative is no longer aligned with the campaign.",
+      suggestedAction: "Pause the ad in Meta Ads.",
+      expectedImpact: "Stop spend on this creative while preserving the campaign and ad set.",
+      currentSpend: Number(ad.spend || 0),
+      currentCpa: cpaFor(ad),
+      automationAllowed: Boolean(adId),
+      guardrailStatus: adId ? "eligible" : "manual_only",
+      guardrailReasons: adId ? [] : ["Meta ad ID is missing."],
+    });
   }
 
   const metaAnomalyAlerts: { severity: "warn" | "critical"; title: string; message: string; action?: string }[] = [];
@@ -585,6 +732,12 @@ export default function MetaAdsPage() {
               { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(v) : "—" },
               { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
               { label: "CPA", key: "cpa", align: "right", render: (v) => <MetricBadge value={fmtMYR(v)} good={v > 0 && v < 5 ? true : v === 0 ? null : false} /> },
+              { label: "Actions", key: "id", align: "right", render: (_v, row) => (
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  <RowActionButton onClick={() => openMetaCampaignBudgetAction(row, "increase")} disabled={!row.daily_budget}>+10%</RowActionButton>
+                  <RowActionButton onClick={() => openMetaCampaignBudgetAction(row, "decrease")} disabled={!row.daily_budget}>-10%</RowActionButton>
+                </div>
+              )},
             ]}
             rows={metaCampaigns}
           />
@@ -595,7 +748,7 @@ export default function MetaAdsPage() {
           <SectionCard title="Creative Performance" description="Ad-level creative performance sorted by spend. Fatigue risk shown when frequency ≥ 3.5.">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
               {ads.map((ad: any, i: number) => (
-                <CreativeCard key={ad.ad_id || i} ad={ad} />
+                <CreativeCard key={ad.ad_id || i} ad={ad} onPauseAd={openMetaPauseAdAction} />
               ))}
             </div>
           </SectionCard>
@@ -615,6 +768,12 @@ export default function MetaAdsPage() {
                 { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
                 { label: "CPA", key: "cpa", align: "right", render: (v) => fmtMYR(v) },
                 { label: "Status", key: "status", render: (v) => <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${v === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{v}</span> },
+                { label: "Actions", key: "adset_id", align: "right", render: (_v, row) => (
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    <RowActionButton onClick={() => openMetaAdSetBudgetAction(row, "increase")} disabled={!row.daily_budget}>+10%</RowActionButton>
+                    <RowActionButton onClick={() => openMetaAdSetBudgetAction(row, "decrease")} disabled={!row.daily_budget}>-10%</RowActionButton>
+                  </div>
+                )},
               ]}
               rows={adSets}
             />
@@ -744,6 +903,13 @@ export default function MetaAdsPage() {
         )}
 
       </div>
+      <ActionDrawer
+        action={actionDraft}
+        clientName={d.client_name}
+        baselineMetrics={d.metrics}
+        open={Boolean(actionDraft)}
+        onClose={() => setActionDraft(null)}
+      />
     </DashboardLayout>
   );
 }

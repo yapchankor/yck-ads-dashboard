@@ -67,6 +67,13 @@ export function DatePicker({ onRangeChange, currentRange, loading = false }: Dat
     () => normalizeDashboardDateRange(currentRange),
     [currentRange],
   );
+  const presetRanges = useMemo(
+    () => presets.map((preset) => ({
+      ...preset,
+      range: getPresetRange(preset.days, normalizedRange.endDate),
+    })),
+    [normalizedRange.endDate],
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [draftStart, setDraftStart] = useState(normalizedRange.startDate);
   const [draftEnd, setDraftEnd] = useState(normalizedRange.endDate);
@@ -151,9 +158,9 @@ export function DatePicker({ onRangeChange, currentRange, loading = false }: Dat
             className="absolute right-0 mt-2 w-[360px] max-w-[calc(100vw-2rem)] bg-surface border border-border shadow-xl rounded-2xl p-4 z-40 animate-in fade-in zoom-in duration-150"
           >
             <div className="grid grid-cols-3 gap-2">
-              {presets.map((preset) => (
+              {presetRanges.map((preset) => (
                 (() => {
-                  const presetRange = getPresetRange(preset.days);
+                  const presetRange = preset.range;
                   const isActive =
                     normalizedRange.startDate === presetRange.startDate &&
                     normalizedRange.endDate === presetRange.endDate;

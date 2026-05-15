@@ -73,6 +73,28 @@ function getBeforeAfter(item: TrackedItem): string {
   return "—";
 }
 
+function getLatestSnapshot(item: TrackedItem) {
+  return item.snapshots?.day_30 || item.snapshots?.day_14 || item.snapshots?.day_7 || null;
+}
+
+function getSnapshotSummary(item: TrackedItem) {
+  const snapshot = getLatestSnapshot(item);
+  if (!snapshot?.summary) return null;
+
+  return snapshot.summary
+    .replace(/^CPA improved/i, "Account-level CPA improved")
+    .replace(/^CPA worsened/i, "Account-level CPA worsened")
+    .replace(/^CPA unchanged/i, "Account-level CPA unchanged");
+}
+
+function getSnapshotTone(item: TrackedItem) {
+  const status = getLatestSnapshot(item)?.actual_impact?.status?.toLowerCase();
+  if (status === "worse") return "text-red-600";
+  if (status === "improved") return "text-green-700";
+  if (status === "needs data") return "text-amber-700";
+  return "text-text-muted";
+}
+
 export default function TrackingPage() {
   const [trackedItems, setTrackedItems] = useState<TrackedItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -359,12 +381,11 @@ export default function TrackingPage() {
                               <span className="text-[10px] font-bold text-text-muted uppercase">Removed from queue</span>
                             ) : item.status === "Failed" ? (
                               <span className="text-[10px] font-bold text-red-600 uppercase">Action failed</span>
-                            ) : item.snapshots?.day_30?.summary ? (
-                              <span className="text-xs font-bold text-green-700">{item.snapshots.day_30.summary}</span>
-                            ) : item.snapshots?.day_14?.summary ? (
-                              <span className="text-xs font-bold text-green-700">{item.snapshots.day_14.summary}</span>
-                            ) : item.snapshots?.day_7?.summary ? (
-                              <span className="text-xs font-bold text-green-700">{item.snapshots.day_7.summary}</span>
+                            ) : getSnapshotSummary(item) ? (
+                              <div className="flex flex-col gap-1">
+                                <span className={`text-xs font-bold ${getSnapshotTone(item)}`}>{getSnapshotSummary(item)}</span>
+                                <span className="text-[10px] font-medium text-text-muted">Directional account-level snapshot, not single-change attribution.</span>
+                              </div>
                             ) : item.days_active < 7 ? (
                               <div className="flex items-center gap-2">
                                 <div className="h-1.5 w-16 bg-border/40 rounded-full overflow-hidden">
