@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { recommendationToActionPreview } from "@/lib/action-types";
+import { AssistantMarkdown } from "@/components/ui/AssistantMarkdown";
 import {
   DEFAULT_RESPONSE_STYLE,
   findRecommendationById,
@@ -245,7 +246,11 @@ export function ChatWidget() {
                         : "border border-border/60 bg-background text-foreground",
                     )}
                   >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    {message.role === "assistant" ? (
+                      <AssistantMarkdown content={message.content} />
+                    ) : (
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    )}
                     {message.recommendationId && (
                       <button
                         type="button"
