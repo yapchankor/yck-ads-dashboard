@@ -8,6 +8,7 @@ import { UserButton } from "@clerk/nextjs";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { getActiveClient } from "@/lib/client-config";
+import { ChatWidget } from "@/components/ui/ChatWidget";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -239,6 +240,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
               {children}
             </div>
           </main>
+          <ChatWidget />
         </div>
       </div>
     );
@@ -254,6 +256,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
             {children}
           </div>
         </main>
+        <ChatWidget />
       </div>
     </div>
   );

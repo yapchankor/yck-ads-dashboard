@@ -1,0 +1,1 @@
+export const CHAT_UPSTREAM_TIMEOUT_MS = 110_000;
