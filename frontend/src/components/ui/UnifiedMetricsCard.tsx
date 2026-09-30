@@ -2,6 +2,7 @@ import React from "react";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { formatCurrency } from "@/lib/client-config";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -31,8 +32,8 @@ function MetricItem({ title, value, delta, deltaType, isCurrency, inverseColors 
     }
   }
 
-  const formattedValue = isCurrency && typeof value === 'number' 
-    ? new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(value)
+  const formattedValue = isCurrency && typeof value === 'number'
+    ? formatCurrency(value)
     : typeof value === 'number' ? value.toLocaleString() : value;
 
   return (

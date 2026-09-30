@@ -6,16 +6,18 @@ import { DatePicker } from "@/components/ui/DatePicker";
 import { DateRangeSelection } from "@/lib/date-range";
 import { fetchDashboardData } from "@/lib/dashboard-refresh";
 import { ActionPreview } from "@/lib/types";
+import { RecommendationsPointer } from "@/components/ui/RecommendationsPointer";
+import { formatCurrency, formatNumber } from "@/lib/client-config";
 import React, { useEffect, useState } from "react";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number, decimals = 0) {
   if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString("en-MY", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return formatNumber(n, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 function fmtMYR(n: number) {
   if (!Number.isFinite(n)) return "—";
-  return new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR" }).format(n);
+  return formatCurrency(n);
 }
 function fmtPct(n: number) {
   if (!Number.isFinite(n)) return "—";
@@ -186,18 +188,34 @@ function InsightCard({ insight }: { insight: { type: string; title: string; desc
   );
 }
 
-function CreativeCard({ ad, onPauseAd }: { ad: any; onPauseAd?: (ad: any) => void }) {
+function CreativeCard({ ad, avgCpa = 0, onPauseAd }: { ad: any; avgCpa?: number; onPauseAd?: (ad: any) => void }) {
   const hasFatigue = Number(ad.frequency) >= 3.5;
   const spend = Number(ad.spend ?? 0);
   const conv = Number(ad.conversions ?? 0);
   const explicitCpa = Number(ad.cost_per_conversion ?? ad.cpa ?? 0);
   const derivedCpa = explicitCpa > 0 ? explicitCpa : conv > 0 ? spend / conv : 0;
+  // Decaying = overexposed AND cost per result running well above the account average.
+  const isDecaying = hasFatigue && derivedCpa > 0 && avgCpa > 0 && derivedCpa > avgCpa * 1.3;
+  // Attention metrics: Hook = 3s plays / impressions; Hold = ThruPlay (~15s) / 3s plays.
+  const impressions = Number(ad.impressions ?? 0);
+  const video3s = Number(ad.video_3s ?? 0);
+  const thruplays = Number(ad.video_thruplays ?? 0);
+  const hasVideo = video3s > 0 || thruplays > 0;
+  const hookRate = impressions > 0 ? (video3s / impressions) * 100 : 0;
+  const holdRate = video3s > 0 ? (thruplays / video3s) * 100 : 0;
+  const weakHook = hasVideo && hookRate > 0 && hookRate < 25;
   const adName = ad.ad_name || ad.name || "Untitled Ad";
   const imageUrl = String(ad.image_url || "");
   const isLowResPreview = /(?:^|[?&])stp=[^&]*p64x64/i.test(imageUrl) || /p64x64/i.test(imageUrl);
 
+  const fatigueBadge = isDecaying ? (
+    <span className="absolute top-2 right-2 bg-red-600 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full">Fatigued</span>
+  ) : hasFatigue ? (
+    <span className="absolute top-2 right-2 bg-amber-500 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full">Fatigue</span>
+  ) : null;
+
   return (
-    <div className="border border-border/60 rounded-xl overflow-hidden hover:shadow-sm transition-shadow flex flex-col">
+    <div className={`border rounded-xl overflow-hidden hover:shadow-sm transition-shadow flex flex-col ${isDecaying ? "border-red-400 ring-1 ring-red-200" : "border-border/60"}`}>
       {imageUrl ? (
         <div className="relative aspect-video bg-surface-hover overflow-hidden">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -211,16 +229,12 @@ function CreativeCard({ ad, onPauseAd }: { ad: any; onPauseAd?: (ad: any) => voi
               Low-res Meta preview
             </span>
           )}
-          {hasFatigue && (
-            <span className="absolute top-2 right-2 bg-amber-500 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full">Fatigue</span>
-          )}
+          {fatigueBadge}
         </div>
       ) : (
         <div className="relative aspect-video bg-surface-hover flex items-center justify-center">
           <span className="text-[10px] text-text-muted font-medium">No image</span>
-          {hasFatigue && (
-            <span className="absolute top-2 right-2 bg-amber-500 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full">Fatigue</span>
-          )}
+          {fatigueBadge}
         </div>
       )}
       <div className="p-3 flex flex-col gap-2 flex-1">
@@ -241,11 +255,29 @@ function CreativeCard({ ad, onPauseAd }: { ad: any; onPauseAd?: (ad: any) => voi
           </div>
           <div>
             <p className="text-[9px] text-text-muted uppercase font-semibold">Freq</p>
-            <p className={`text-xs font-bold ${hasFatigue ? "text-amber-600" : "text-foreground"}`}>
+            <p className={`text-xs font-bold ${isDecaying ? "text-red-600" : hasFatigue ? "text-amber-600" : "text-foreground"}`}>
               {Number(ad.frequency) > 0 ? Number(ad.frequency).toFixed(1) : "—"}
             </p>
           </div>
         </div>
+        {hasVideo && (
+          <div className="grid grid-cols-2 gap-1 text-center border-t border-border/40 pt-2">
+            <div>
+              <p className="text-[9px] text-text-muted uppercase font-semibold">Hook</p>
+              <p className={`text-xs font-bold ${weakHook ? "text-amber-600" : "text-foreground"}`}>{hookRate > 0 ? `${hookRate.toFixed(1)}%` : "—"}</p>
+            </div>
+            <div>
+              <p className="text-[9px] text-text-muted uppercase font-semibold">Hold</p>
+              <p className="text-xs font-bold text-foreground">{holdRate > 0 ? `${holdRate.toFixed(0)}%` : "—"}</p>
+            </div>
+          </div>
+        )}
+        {weakHook && (
+          <p className="text-[10px] font-bold text-amber-600 text-center">Weak hook — first 3s not landing</p>
+        )}
+        {isDecaying && (
+          <p className="text-[10px] font-bold text-red-600 text-center">Fatigued — refresh this creative</p>
+        )}
         <div className="pt-2">
           <button
             type="button"
@@ -455,7 +487,6 @@ export default function MetaAdsPage() {
   const hourly: any[] = timePerf.hourly || [];
   const daily: any[] = timePerf.daily || [];
   const dayOfWeekRows = buildDayOfWeekRows(daily);
-  const recommendations: any[] = (d.recommendations || []).filter((r: any) => r.platform === "Meta");
   const ads: any[] = (d.ads || [])
     .filter((a: any) => (a.spend || 0) > 0)
     .sort((a: any, b: any) => (b.spend || 0) - (a.spend || 0));
@@ -691,24 +722,8 @@ export default function MetaAdsPage() {
           </SectionCard>
         )}
 
-        {recommendations.length > 0 && (
-          <SectionCard title={`Optimization Recommendations (${recommendations.length})`} description="Actionable insights sorted by priority. Apply these to improve performance.">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-              {recommendations.map((rec: any, i: number) => (
-                <div key={i} className="border border-border/60 rounded-xl p-4 hover:shadow-sm transition-shadow">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-bold text-foreground">{rec.title}</p>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      rec.impact === "High" ? "bg-red-100 text-red-600" :
-                      rec.impact === "Medium" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"
-                    }`}>{rec.impact}</span>
-                  </div>
-                  <p className="text-xs text-text-muted leading-relaxed">{rec.description}</p>
-                </div>
-              ))}
-            </div>
-          </SectionCard>
-        )}
+        {/* ── Recommendations pointer ── */}
+        <RecommendationsPointer platform="Meta" recommendations={d.recommendations} />
 
         {/* ── Campaign Performance ── */}
         <SectionCard title="Campaign Performance">
@@ -745,10 +760,11 @@ export default function MetaAdsPage() {
 
         {/* ── Creative Performance ── */}
         {ads.length > 0 && (
-          <SectionCard title="Creative Performance" description="Ad-level creative performance sorted by spend. Fatigue risk shown when frequency ≥ 3.5.">
+          <SectionCard title="Creative Performance" description="Ad-level creative performance sorted by spend. Amber = high frequency; red = fatigued (high frequency and CPA well above account average).">
+            <p className="px-4 pt-3 text-[11px] text-text-muted">Hook, Hold and video retention are shown for the full reporting period, not custom date ranges.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
               {ads.map((ad: any, i: number) => (
-                <CreativeCard key={ad.ad_id || i} ad={ad} onPauseAd={openMetaPauseAdAction} />
+                <CreativeCard key={ad.ad_id || i} ad={ad} avgCpa={metaCPA} onPauseAd={openMetaPauseAdAction} />
               ))}
             </div>
           </SectionCard>

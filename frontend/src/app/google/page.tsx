@@ -6,14 +6,17 @@ import { DatePicker } from "@/components/ui/DatePicker";
 import { DateRangeSelection } from "@/lib/date-range";
 import { fetchDashboardData } from "@/lib/dashboard-refresh";
 import { ActionPreview } from "@/lib/types";
+import { RecommendationsPointer } from "@/components/ui/RecommendationsPointer";
+import { formatCurrency, formatNumber } from "@/lib/client-config";
+import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts";
 import React, { useEffect, useState } from "react";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 function fmt(n: number, decimals = 0) {
-  return n.toLocaleString("en-MY", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return formatNumber(n, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 function fmtMYR(n: number) {
-  return new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR" }).format(n);
+  return formatCurrency(n);
 }
 function fmtPct(n: number) {
   return `${n.toFixed(2)}%`;
@@ -54,6 +57,23 @@ function SectionCard({ title, description, children }: { title: string; descript
         {description && <p className="text-xs text-text-muted mt-0.5">{description}</p>}
       </div>
       <div className="overflow-x-auto">{children}</div>
+    </div>
+  );
+}
+
+function PacingGauge({ pct, color, centerLabel, sublabel }: { pct: number; color: string; centerLabel: string; sublabel: string }) {
+  const clamped = Math.max(0, Math.min(Number.isFinite(pct) ? pct : 0, 100));
+  const data = [{ name: "pacing", value: clamped, fill: color }];
+  return (
+    <div className="relative" style={{ width: 150, height: 150 }}>
+      <RadialBarChart width={150} height={150} cx="50%" cy="50%" innerRadius="72%" outerRadius="100%" barSize={13} data={data} startAngle={90} endAngle={-270}>
+        <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+        <RadialBar background={{ fill: "rgba(148,163,184,0.18)" }} dataKey="value" cornerRadius={7} angleAxisId={0} />
+      </RadialBarChart>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-bold leading-none" style={{ color }}>{centerLabel}</span>
+        <span className="text-[10px] text-text-muted mt-1 text-center px-2">{sublabel}</span>
+      </div>
     </div>
   );
 }
@@ -398,7 +418,6 @@ export default function GoogleAdsPage() {
   const adGroups: any[] = d.ad_groups || [];
   const googleAds: any[] = d.google_ads || [];
   const insights: any[] = d.insights || [];
-  const recommendations: any[] = (d.recommendations || []).filter((r: any) => r.platform !== "Meta");
   const budgetPacing = d.budget_pacing || {};
   const landingHeatmap = d.landing_page_heatmap || {};
   const qualityRoadmap = d.quality_score_roadmap || {};
@@ -406,6 +425,13 @@ export default function GoogleAdsPage() {
   const googleTime = d.google_time_performance || {};
   const googleDevice = d.google_device_performance || {};
   const negativeKeywords: any[] = d.google_negative_keywords || [];
+  const pmaxCampaigns: any[] = d.pmax_campaigns || [];
+  const pmaxAssetGroups: any[] = d.pmax_asset_groups || [];
+  const pmaxSearchTerms: any[] = d.pmax_search_terms || [];
+  const pmaxChannels: any[] = d.pmax_channels || [];
+  const hasPmax = pmaxCampaigns.length > 0 || pmaxAssetGroups.length > 0 || pmaxSearchTerms.length > 0 || pmaxChannels.length > 0;
+  const rsaAssets: any[] = d.rsa_asset_performance || [];
+  const changeHistory: any[] = d.change_history || [];
   const trends = d.trends || {};
   const trendItems = [
     { label: "Spend Change", key: "spend_change" },
@@ -667,14 +693,15 @@ export default function GoogleAdsPage() {
           const variancePct = hasBudgetTarget ? ((projectedMonthly - monthlyBudgetTarget) / monthlyBudgetTarget) * 100 : 0;
           const absVariance = Math.abs(variancePct);
           const overBudget = variancePct > 0;
+          const budgetUsedPct = hasBudgetTarget ? (projectedMonthly / monthlyBudgetTarget) * 100 : 0;
 
           const pacingColor = !hasBudgetTarget
-            ? { tile: "border-border/60 bg-surface-hover", badge: "bg-slate-100 text-slate-600", label: "" }
+            ? { tile: "border-border/60 bg-surface-hover", badge: "bg-slate-100 text-slate-600", label: "", gaugeHex: "#94a3b8" }
             : absVariance <= 10
-            ? { tile: "border-emerald-200 bg-emerald-50", badge: "bg-emerald-100 text-emerald-700", label: "On track" }
+            ? { tile: "border-emerald-200 bg-emerald-50", badge: "bg-emerald-100 text-emerald-700", label: "On track", gaugeHex: "#059669" }
             : absVariance <= 25
-            ? { tile: "border-amber-200 bg-amber-50", badge: "bg-amber-100 text-amber-700", label: overBudget ? "Overpacing" : "Underpacing" }
-            : { tile: "border-red-200 bg-red-50", badge: "bg-red-100 text-red-700", label: overBudget ? "Critical overspend" : "Critical underspend" };
+            ? { tile: "border-amber-200 bg-amber-50", badge: "bg-amber-100 text-amber-700", label: overBudget ? "Overpacing" : "Underpacing", gaugeHex: "#d97706" }
+            : { tile: "border-red-200 bg-red-50", badge: "bg-red-100 text-red-700", label: overBudget ? "Critical overspend" : "Critical underspend", gaugeHex: "#dc2626" };
 
           const recommendedAction = !hasBudgetTarget
             ? null
@@ -690,41 +717,47 @@ export default function GoogleAdsPage() {
 
           return (
             <SectionCard title="Budget Pacing" description="Spend rate, monthly projection, and pacing vs. campaign budgets.">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 p-4">
-                <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Daily Avg Spend</p>
-                  <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(budgetPacing.daily_avg_spend || 0)}</p>
-                </div>
-                <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Projected Monthly</p>
-                  <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(projectedMonthly)}</p>
-                </div>
-                <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Days Analysed</p>
-                  <p className="mt-1 text-xl font-bold text-foreground">{fmt(budgetPacing.days_in_period || 0)}</p>
-                </div>
+              <div className="flex flex-col lg:flex-row gap-4 p-4">
                 {hasBudgetTarget && (
-                  <>
+                  <div className={`flex flex-col items-center justify-center rounded-xl border p-4 lg:w-60 shrink-0 ${pacingColor.tile}`}>
+                    <PacingGauge
+                      pct={budgetUsedPct}
+                      color={pacingColor.gaugeHex}
+                      centerLabel={`${budgetUsedPct.toFixed(0)}%`}
+                      sublabel="of monthly budget projected"
+                    />
+                    <span className={`mt-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full ${pacingColor.badge}`}>
+                      {pacingColor.label}
+                    </span>
+                    <p className="mt-1.5 text-xs font-semibold text-text-muted">
+                      {overBudget ? "+" : ""}{variancePct.toFixed(1)}% vs target
+                    </p>
+                    {recommendedAction && (
+                      <p className="mt-1 text-[11px] text-center text-foreground font-semibold leading-tight">→ {recommendedAction}</p>
+                    )}
+                  </div>
+                )}
+                <div className={`grid grid-cols-2 gap-3 flex-1 ${hasBudgetTarget ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
+                  <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Daily Avg Spend</p>
+                    <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(budgetPacing.daily_avg_spend || 0)}</p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Projected Monthly</p>
+                    <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(projectedMonthly)}</p>
+                  </div>
+                  <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Days Analysed</p>
+                    <p className="mt-1 text-xl font-bold text-foreground">{fmt(budgetPacing.days_in_period || 0)}</p>
+                  </div>
+                  {hasBudgetTarget && (
                     <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Monthly Budget</p>
                       <p className="mt-1 text-xl font-bold text-foreground">{fmtMYR(monthlyBudgetTarget)}</p>
                       <p className="text-[10px] text-text-muted mt-0.5">From active campaign budgets</p>
                     </div>
-                    <div className={`rounded-xl border p-4 ${pacingColor.tile}`}>
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Pacing Variance</p>
-                      <p className={`mt-1 text-xl font-bold ${absVariance <= 10 ? "text-emerald-700" : absVariance <= 25 ? "text-amber-700" : "text-red-700"}`}>
-                        {overBudget ? "+" : ""}{variancePct.toFixed(1)}%
-                      </p>
-                      <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${pacingColor.badge}`}>
-                        {pacingColor.label}
-                      </span>
-                    </div>
-                    <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Recommended Action</p>
-                      <p className="mt-1 text-sm font-semibold text-foreground leading-tight">{recommendedAction}</p>
-                    </div>
-                  </>
-                )}
+                  )}
+                </div>
               </div>
             </SectionCard>
           );
@@ -860,6 +893,126 @@ export default function GoogleAdsPage() {
             rows={googleCampaigns}
           />
         </SectionCard>
+
+        {/* ── Performance Max ── */}
+        {hasPmax && (
+          <div className="flex flex-col gap-6">
+            {pmaxCampaigns.length > 0 && (
+              <SectionCard title="Performance Max Campaigns" description="Goal-based campaigns that run across Search, YouTube, Display, Discover, Gmail, and Maps.">
+                <DetailTable
+                  headers={[
+                    { label: "Campaign", key: "name", render: (v) => <span className="font-semibold text-foreground">{v}</span> },
+                    { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
+                    { label: "Daily Budget", key: "daily_budget", align: "right", render: (v) => fmtMaybeMYR(v) },
+                    { label: "Spend", key: "cost", align: "right", render: (v) => fmtMYR(v) },
+                    { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
+                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                    { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(asPct(v)) : "—" },
+                    { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                    { label: "CPA", key: "cost_per_conversion", align: "right", render: (v) => fmtMaybeMYR(v) },
+                    { label: "ROAS", key: "roas", align: "right", render: (v) => v > 0 ? `${fmt(v, 2)}x` : <span className="text-text-muted">—</span> },
+                  ]}
+                  rows={pmaxCampaigns}
+                />
+              </SectionCard>
+            )}
+
+            {pmaxAssetGroups.length > 0 && (
+              <SectionCard title="Asset Group Performance" description="Ad strength and delivery for each Performance Max asset group.">
+                <DetailTable
+                  headers={[
+                    { label: "Asset Group", key: "name", render: (v) => <span className="font-semibold text-foreground">{v}</span> },
+                    { label: "Campaign", key: "campaign_name" },
+                    { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
+                    { label: "Ad Strength", key: "ad_strength", render: (v) => v ? fmtEnum(v) : <span className="text-text-muted">—</span> },
+                    { label: "Spend", key: "cost", align: "right", render: (v) => fmtMYR(v) },
+                    { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
+                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                    { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(asPct(v)) : "—" },
+                    { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                    { label: "CPA", key: "cpa", align: "right", render: (v) => fmtMaybeMYR(v) },
+                  ]}
+                  rows={pmaxAssetGroups}
+                />
+              </SectionCard>
+            )}
+
+            {pmaxSearchTerms.length > 0 && (
+              <SectionCard title="Search Themes (Keywordless)" description="Performance Max reports search categories, not individual keywords.">
+                <DetailTable
+                  headers={[
+                    { label: "Search Theme", key: "category_label", render: (v) => <span className="font-semibold text-foreground">{v}</span> },
+                    { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
+                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                    { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                    { label: "Conv. Value", key: "conversion_value", align: "right", render: (v) => fmtMaybeMYR(v) },
+                  ]}
+                  rows={pmaxSearchTerms}
+                />
+              </SectionCard>
+            )}
+
+            {pmaxChannels.length > 0 && (
+              <SectionCard title="Channel Breakdown" description="Spend and conversions by network for Performance Max delivery.">
+                <DetailTable
+                  headers={[
+                    { label: "Campaign", key: "campaign_name" },
+                    { label: "Channel", key: "channel", render: (v) => v ? fmtEnum(v) : <span className="text-text-muted">—</span> },
+                    { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
+                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                    { label: "Spend", key: "cost", align: "right", render: (v) => fmtMYR(v) },
+                    { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                  ]}
+                  rows={pmaxChannels}
+                />
+              </SectionCard>
+            )}
+          </div>
+        )}
+
+        {/* ── Ad Copy Asset Performance (RSA per-asset) ── */}
+        {rsaAssets.length > 0 && (
+          <SectionCard title={`Ad Copy Asset Performance (${rsaAssets.length})`} description="Google's LOW / GOOD / BEST rating for each responsive search ad headline and description. Replace LOW-rated assets first.">
+            <DetailTable
+              headers={[
+                { label: "Asset", key: "text", render: (v) => <span className="text-foreground">{v || "—"}</span> },
+                { label: "Type", key: "field_type", render: (v) => fmtEnum(v) },
+                { label: "Ad Group", key: "ad_group_name" },
+                { label: "Rating", key: "performance_label", render: (v) => {
+                  const label = String(v || "").toUpperCase();
+                  const color =
+                    label === "BEST" ? "bg-green-500/15 text-green-500" :
+                    label === "GOOD" ? "bg-blue-500/15 text-blue-500" :
+                    label === "LOW" ? "bg-red-500/15 text-red-500" :
+                    label === "LEARNING" ? "bg-amber-500/15 text-amber-500" :
+                    null;
+                  if (!color) return <span className="text-text-muted">—</span>;
+                  return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${color}`}>{fmtEnum(v)}</span>;
+                }},
+                { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
+                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+              ]}
+              rows={rsaAssets}
+            />
+          </SectionCard>
+        )}
+
+        {/* ── Recent Account Changes ── */}
+        {changeHistory.length > 0 && (
+          <SectionCard title={`Recent Account Changes (${changeHistory.length})`} description="Edits made in this account over the last 30 days (Google Ads change history).">
+            <DetailTable
+              headers={[
+                { label: "When", key: "change_date_time", render: (v) => <span className="text-text-muted">{v ? String(v).slice(0, 16) : "—"}</span> },
+                { label: "User", key: "user_email" },
+                { label: "Resource", key: "resource_type", render: (v) => fmtEnum(v) },
+                { label: "Change", key: "operation", render: (v) => <StatusPill value={v} /> },
+                { label: "Fields", key: "changed_fields", render: (v) => Array.isArray(v) && v.length ? <span className="text-xs text-text-muted">{v.map((f: string) => f.split(".").pop()).join(", ")}</span> : "—" },
+              ]}
+              rows={changeHistory}
+            />
+          </SectionCard>
+        )}
 
         {adGroups.length > 0 && (
           <SectionCard title={`Ad Group Performance (${adGroups.length})`} description="Ad group evidence for budget, keyword, and ad-copy decisions.">
@@ -1272,25 +1425,8 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {/* ── Recommendations ── */}
-        {recommendations.length > 0 && (
-          <SectionCard title={`Optimization Recommendations (${recommendations.length})`} description="Actionable recommendations. Apply these to improve performance.">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-              {recommendations.map((rec: any, i: number) => (
-                <div key={i} className="border border-border/60 rounded-xl p-4 hover:shadow-sm transition-shadow">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-bold text-foreground">{rec.title}</p>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      rec.impact === "High" ? "bg-red-100 text-red-600" :
-                      rec.impact === "Medium" ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"
-                    }`}>{rec.impact}</span>
-                  </div>
-                  <p className="text-xs text-text-muted leading-relaxed">{rec.description}</p>
-                </div>
-              ))}
-            </div>
-          </SectionCard>
-        )}
+        {/* ── Recommendations pointer ── */}
+        <RecommendationsPointer platform="Google" recommendations={d.recommendations} />
 
       </div>
       <ActionDrawer

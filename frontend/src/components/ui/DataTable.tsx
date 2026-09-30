@@ -1,5 +1,6 @@
 import React from "react";
 import { Campaign } from "@/lib/types";
+import { currencySymbol } from "@/lib/client-config";
 
 type InsightLabel = {
   text: string;
@@ -107,9 +108,9 @@ export function DataTable({ data }: { data: Campaign[] }) {
                     {row.status}
                   </span>
                 </td>
-                <td className="px-4 py-4 text-right font-medium text-foreground">RM {row.spend.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                <td className="px-4 py-4 text-right font-medium text-foreground">{currencySymbol()}{row.spend.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                 <td className="px-4 py-4 text-right font-medium text-foreground">{row.conversions}</td>
-                <td className="px-4 py-4 text-right font-medium text-foreground">RM {row.cpa.toFixed(2)}</td>
+                <td className="px-4 py-4 text-right font-medium text-foreground">{currencySymbol()}{row.cpa.toFixed(2)}</td>
               </tr>
             ))}
           </tbody>

@@ -1,8 +1,9 @@
 "use client";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { currencySymbol, getActiveClient } from "@/lib/client-config";
 import React, { useEffect, useState } from "react";
-import { TrendingUp, Clock, CheckCircle2, AlertCircle, Zap, Target, Trash2, Wrench, History } from "lucide-react";
+import { TrendingUp, Clock, CheckCircle2, AlertCircle, Zap, Target, Wrench, History } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -42,11 +43,18 @@ interface TrackedItem {
   };
   snapshots?: {
     day_0?: unknown;
-    day_7?: { summary?: string; actual_impact?: { status?: string } };
-    day_14?: { summary?: string; actual_impact?: { status?: string } };
-    day_30?: { summary?: string; actual_impact?: { status?: string } };
+    day_7?: MilestoneSnapshot;
+    day_14?: MilestoneSnapshot;
+    day_30?: MilestoneSnapshot;
   };
 }
+
+type MilestoneSnapshot = {
+  summary?: string;
+  scope?: string;
+  attribution?: string;
+  actual_impact?: { status?: string };
+};
 
 type TabId = "outcome" | "changelog";
 type PlatformFilter = "All" | "Google" | "Meta";
@@ -61,14 +69,14 @@ function getBeforeAfter(item: TrackedItem): string {
     return item.suggested_adjustment ? `Bid modifier -> ${item.suggested_adjustment}` : "Bid modifier";
   }
   if (item.action_type === "bid_adjustment" && item.current_bid != null) {
-    const after = item.suggested_bid != null ? `RM ${item.suggested_bid.toFixed(2)}` : "—";
-    return `RM ${item.current_bid.toFixed(2)} → ${after}`;
+    const after = item.suggested_bid != null ? `${currencySymbol()}${item.suggested_bid.toFixed(2)}` : "—";
+    return `${currencySymbol()}${item.current_bid.toFixed(2)} → ${after}`;
   }
   if (item.action_type === "budget_adjustment" && item.current_budget != null) {
     if (item.suggested_bid != null) {
-      return `RM ${item.current_budget.toFixed(2)} -> RM ${item.suggested_bid.toFixed(2)}`;
+      return `${currencySymbol()}${item.current_budget.toFixed(2)} -> ${currencySymbol()}${item.suggested_bid.toFixed(2)}`;
     }
-    return `RM ${item.current_budget.toFixed(2)} → —`;
+    return `${currencySymbol()}${item.current_budget.toFixed(2)} → —`;
   }
   return "—";
 }
@@ -78,13 +86,21 @@ function getLatestSnapshot(item: TrackedItem) {
 }
 
 function getSnapshotSummary(item: TrackedItem) {
-  const snapshot = getLatestSnapshot(item);
-  if (!snapshot?.summary) return null;
+  // The backend now returns an already-scoped, honest summary (e.g. "Campaign CPA improved..."
+  // or "Account-level CPA improved..."), so we surface it verbatim.
+  return getLatestSnapshot(item)?.summary || null;
+}
 
-  return snapshot.summary
-    .replace(/^CPA improved/i, "Account-level CPA improved")
-    .replace(/^CPA worsened/i, "Account-level CPA worsened")
-    .replace(/^CPA unchanged/i, "Account-level CPA unchanged");
+function getSnapshotScope(item: TrackedItem): string | null {
+  return getLatestSnapshot(item)?.scope || null;
+}
+
+function getSnapshotAttributionNote(item: TrackedItem): string {
+  const scope = getSnapshotScope(item);
+  if (scope && scope !== "account") {
+    return `Measured on the ${scope} that changed — post-change window vs the matched period before.`;
+  }
+  return "Account-level trend since apply, not attributed to this single change.";
 }
 
 function getSnapshotTone(item: TrackedItem) {
@@ -339,9 +355,9 @@ export default function TrackingPage() {
                             </div>
                             {item.evidence_snapshot && (
                               <p className="text-[10px] text-text-muted">
-                                Baseline: {typeof item.evidence_snapshot.spend === "number" ? `RM ${item.evidence_snapshot.spend.toFixed(2)}` : "spend n/a"}
+                                Baseline: {typeof item.evidence_snapshot.spend === "number" ? `${currencySymbol()}${item.evidence_snapshot.spend.toFixed(2)}` : "spend n/a"}
                                 {typeof item.evidence_snapshot.conversions === "number" ? `, ${item.evidence_snapshot.conversions} conv.` : ""}
-                                {typeof item.evidence_snapshot.cpa === "number" ? `, RM ${item.evidence_snapshot.cpa.toFixed(2)} CPA` : ""}
+                                {typeof item.evidence_snapshot.cpa === "number" ? `, ${currencySymbol()}${item.evidence_snapshot.cpa.toFixed(2)} CPA` : ""}
                               </p>
                             )}
                             {item.execution_status && (
@@ -384,7 +400,7 @@ export default function TrackingPage() {
                             ) : getSnapshotSummary(item) ? (
                               <div className="flex flex-col gap-1">
                                 <span className={`text-xs font-bold ${getSnapshotTone(item)}`}>{getSnapshotSummary(item)}</span>
-                                <span className="text-[10px] font-medium text-text-muted">Directional account-level snapshot, not single-change attribution.</span>
+                                <span className="text-[10px] font-medium text-text-muted">{getSnapshotAttributionNote(item)}</span>
                               </div>
                             ) : item.days_active < 7 ? (
                               <div className="flex items-center gap-2">
@@ -397,25 +413,7 @@ export default function TrackingPage() {
                               <span className="text-[10px] font-bold text-text-muted uppercase">Awaiting milestone snapshot</span>
                             )}
 
-                            <button
-                              onClick={async () => {
-                                if (confirm("Remove this item from tracking?")) {
-                                  const res = await fetch(
-                                    `/api/tracking?recommendation_id=${encodeURIComponent(item.recommendation_id)}&client_name=${encodeURIComponent(item.client_name)}`,
-                                    { method: "DELETE" }
-                                  );
-                                  if (res.ok) {
-                                    setTrackedItems((prev) =>
-                                      prev.filter((i) => i.recommendation_id !== item.recommendation_id)
-                                    );
-                                  }
-                                }
-                              }}
-                              className="p-2 text-text-muted hover:text-red-500 transition-colors rounded-lg hover:bg-red-50 opacity-0 group-hover:opacity-100"
-                              title="Delete from history"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            <span className="text-[10px] font-bold uppercase text-text-muted">Audit history</span>
                           </div>
                         </td>
                       </tr>
@@ -448,19 +446,19 @@ export default function TrackingPage() {
                   <li className="flex items-start gap-3">
                     <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">1</div>
                     <p className="text-xs text-text-muted leading-relaxed">
-                      <strong className="text-foreground">Snapshot</strong>: We capture the baseline CPA, spend, and conversion volume the moment you apply a change.
+                      <strong className="text-foreground">Baseline window</strong>: We record which campaign, ad set, or ad you changed and its performance in the equal-length window <em>before</em> the change.
                     </p>
                   </li>
                   <li className="flex items-start gap-3">
                     <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">2</div>
                     <p className="text-xs text-text-muted leading-relaxed">
-                      <strong className="text-foreground">7-Day Burn</strong>: Advertising algorithms take up to 7 days to stabilize. We display &ldquo;Collecting Data&rdquo; during this period.
+                      <strong className="text-foreground">Stabilization</strong>: Ad platforms take up to 7 days to settle, so we show &ldquo;Collecting Data&rdquo; until the first milestone.
                     </p>
                   </li>
                   <li className="flex items-start gap-3">
                     <div className="w-5 h-5 rounded-full bg-accent-primary/20 flex items-center justify-center text-[10px] font-bold text-accent-primary shrink-0 mt-0.5">3</div>
                     <p className="text-xs text-text-muted leading-relaxed">
-                      <strong className="text-foreground">Validation</strong>: Performance is compared against the previous 30-day average to calculate the final uplift.
+                      <strong className="text-foreground">Like-for-like</strong>: At day 7 / 14 / 30 we compare that same entity&rsquo;s CPA in the matched window <em>after</em> the change against the window before (equal length, non-overlapping). Account-wide changes are shown as account-level trends, labelled as such.
                     </p>
                   </li>
                 </ul>
@@ -472,7 +470,7 @@ export default function TrackingPage() {
                 </div>
                 <h3 className="text-base font-bold text-foreground mb-2">Continuous Optimization</h3>
                 <p className="text-xs text-text-muted max-w-sm leading-relaxed">
-                  YCK Ads Dashboard uses these historical outcomes to improve its AI impact projections over time, making every recommendation more accurate than the last.
+                  {getActiveClient().brand.metaTitle} uses these historical outcomes to improve its AI impact projections over time, making every recommendation more accurate than the last.
                 </p>
               </div>
             </div>

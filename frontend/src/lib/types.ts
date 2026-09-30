@@ -127,6 +127,25 @@ export type DashboardData = {
     meta?: { days?: number; start_date: string; end_date: string } | null;
   } | null;
   fetched_at?: string | null;
+  timeseries?: TimeseriesPoint[];
+  optimization_score?: number | null;
+  google_recommendations?: { type: string; count: number; est_conversions?: number; est_cost_change?: number }[];
+  pmax_campaigns?: Record<string, any>[];
+  pmax_asset_groups?: Record<string, any>[];
+  pmax_search_terms?: Record<string, any>[];
+  pmax_channels?: Record<string, any>[];
+  rsa_asset_performance?: Record<string, any>[];
+  change_history?: Record<string, any>[];
+};
+
+export type TimeseriesPoint = {
+  date: string;
+  spend: number;
+  conversions: number;
+  google_spend: number;
+  meta_spend: number;
+  google_conversions: number;
+  meta_conversions: number;
 };
 
 export type ApplyResult = {

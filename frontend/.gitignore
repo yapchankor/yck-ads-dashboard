@@ -33,8 +33,11 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
-# vercel
-.vercel
+# Vercel project links and local backups
+.vercel*
+
+# Local reference screenshots; not application assets
+/public/User front end images YCK/
 
 # typescript
 *.tsbuildinfo

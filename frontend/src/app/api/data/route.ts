@@ -1,9 +1,10 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { formatCurrency } from "@/lib/client-config";
 import { resolveClientName } from "@/lib/server-config";
 
 function formatMyr(value: number) {
-  return new Intl.NumberFormat("en-MY", { style: "currency", currency: "MYR" }).format(value);
+  return formatCurrency(value);
 }
 
 function numberOrNull(value: unknown) {
@@ -348,6 +349,8 @@ export async function GET(request: Request) {
         ctr: a.ctr || 0,
         cpa: a.cost_per_conversion || a.cpa || 0,
         roas: a.roas || 0,
+        video_3s: a.video_3s || 0,
+        video_thruplays: a.video_thruplays || 0,
       })),
       // --- Meta-specific detailed data (passed through from FB metrics) ---
       ad_sets: (data.ad_sets || []).map((a: any) => ({
@@ -442,6 +445,10 @@ export async function GET(request: Request) {
       date_range: data.date_range || null,
       platform_date_ranges: data.platform_date_ranges || null,
       fetched_at: data.fetched_at || null,
+      timeseries: Array.isArray(data.timeseries) ? data.timeseries : [],
+      optimization_score: data.optimization_score ?? null,
+      google_recommendations: Array.isArray(data.google_recommendations) ? data.google_recommendations : [],
+      isLive: true,
     };
 
     return NextResponse.json(mappedData);

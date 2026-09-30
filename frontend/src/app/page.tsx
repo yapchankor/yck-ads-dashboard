@@ -4,6 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { UnifiedMetricsCard, AnomalyAlert } from "@/components/ui/UnifiedMetricsCard";
 import { DataTable } from "@/components/ui/DataTable";
 import { DatePicker } from "@/components/ui/DatePicker";
+import { PerformanceChart } from "@/components/ui/PerformanceChart";
 import React, { useEffect, useState } from "react";
 import { DashboardData } from "@/lib/types";
 import { mockMetrics, mockRecommendations, mockCampaigns } from "@/lib/mock-data";
@@ -11,6 +12,7 @@ import { RefreshCcw } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { DateRangeSelection, normalizeDashboardDateRange } from "@/lib/date-range";
+import { currencySymbol } from "@/lib/client-config";
 import { fetchDashboardData, triggerDashboardRefresh } from "@/lib/dashboard-refresh";
 
 function cn(...inputs: ClassValue[]) {
@@ -191,7 +193,7 @@ export default function Home() {
     anomalyAlerts.push({
       severity: wastedSpend > 500 ? "critical" : "warn",
       title: `${zeroConvWaste.length} campaign${zeroConvWaste.length > 1 ? "s" : ""} spending with zero conversions`,
-      message: `RM ${wastedSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })} spent with no tracked results. Check conversion tracking or pause underperformers.`,
+      message: `${currencySymbol()}${wastedSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })} spent with no tracked results. Check conversion tracking or pause underperformers.`,
       action: "Review tracking setup or add these campaigns to your negative keyword list.",
     });
   }
@@ -201,7 +203,7 @@ export default function Home() {
     anomalyAlerts.push({
       severity: "warn",
       title: `CPA spike: ${highCpaCampaigns.length} campaign${highCpaCampaigns.length > 1 ? "s" : ""} above 2× average`,
-      message: `${highCpaCampaigns.map((c) => c.name).join(", ")} — CPA is significantly above blended average (RM ${avgCpa.toFixed(0)}).`,
+      message: `${highCpaCampaigns.map((c) => c.name).join(", ")} — CPA is significantly above blended average (${currencySymbol()}${avgCpa.toFixed(0)}).`,
       action: "Review bids, audience targeting, and landing page quality.",
     });
   }
@@ -211,7 +213,7 @@ export default function Home() {
     anomalyAlerts.push({
       severity: "critical",
       title: "No conversions tracked across all campaigns",
-      message: `RM ${totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })} spent with zero recorded conversions. Conversion tracking may be broken.`,
+      message: `${currencySymbol()}${totalSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })} spent with zero recorded conversions. Conversion tracking may be broken.`,
       action: "Check Google Tag Manager, Meta pixel, and conversion action configurations immediately.",
     });
   }
@@ -295,6 +297,8 @@ export default function Home() {
         )}
 
         <UnifiedMetricsCard metrics={metricsWithROAS} cpaLabel={cpaLabel} anomalyAlerts={anomalyAlerts} />
+
+        <PerformanceChart data={data.timeseries ?? []} />
 
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between mb-1">

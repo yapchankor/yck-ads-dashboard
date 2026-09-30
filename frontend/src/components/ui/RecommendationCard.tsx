@@ -5,8 +5,9 @@ import { AlertCircle, CheckCircle2, Layers, Target, TrendingUp, Wrench, XCircle,
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { ActionDrawer } from "@/components/ui/ActionDrawer";
-import { ACTION_TYPE_LABELS } from "@/lib/action-types";
-import { ActionPreview, DashboardMetrics, Recommendation } from "@/lib/types";
+import { ACTION_TYPE_LABELS, recommendationToActionPreview } from "@/lib/action-types";
+import { formatCurrency } from "@/lib/client-config";
+import { DashboardMetrics, Recommendation } from "@/lib/types";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -22,67 +23,7 @@ const QUALITY_STYLES: Record<string, string> = {
 };
 
 function formatMyr(value: number) {
-  return new Intl.NumberFormat("en-MY", {
-    style: "currency",
-    currency: "MYR",
-  }).format(value);
-}
-
-function recommendationToAction(rec: Recommendation): ActionPreview {
-  return {
-    id: rec.id,
-    title: rec.title,
-    platform: rec.platform,
-    actionType: rec.actionType,
-    impact: rec.impact,
-    targetLabel: rec.keyword || rec.ad_name || rec.segment || rec.placement || rec.location || rec.campaignName,
-    targetId: rec.target_id || null,
-    targetType: rec.keyword ? "Keyword" : rec.ad_name ? "Ad" : rec.adset_id ? "Ad Set" : rec.campaignName ? "Campaign" : "Target",
-    campaignName: rec.campaignName,
-    campaignId: rec.campaign_id,
-    adGroupName: rec.ad_group_name,
-    adsetId: rec.adset_id,
-    adName: rec.ad_name,
-    adId: rec.ad_id,
-    keyword: rec.keyword,
-    negativeKeywords: rec.negative_keywords,
-    matchType: rec.match_type,
-    segment: rec.segment,
-    segmentType: rec.segment_type,
-    placement: rec.placement,
-    location: rec.location,
-    locationKey: rec.location_key,
-    locationType: rec.location_type,
-    locationId: rec.location_id,
-    device: rec.device,
-    timeSlot: rec.time_slot,
-    bestHours: rec.best_hours,
-    wastedDays: rec.wasted_days,
-    campaignIds: rec.campaign_ids,
-    currentValue: rec.current || (rec.current_bid ? formatMyr(rec.current_bid) : rec.current_budget ? formatMyr(rec.current_budget) : null),
-    proposedValue: rec.suggested || rec.suggestedAction || (rec.suggested_bid ? formatMyr(rec.suggested_bid) : rec.suggested_adjustment),
-    currentBid: rec.current_bid,
-    suggestedBid: rec.suggested_bid,
-    currentBudget: rec.current_budget,
-    budgetBasis: rec.budget_basis,
-    suggestedAdjustment: rec.suggested_adjustment,
-    currentCpa: rec.current_cpa,
-    currentSpend: rec.current_spend,
-    currentPerformance: rec.current_performance,
-    reason: rec.description,
-    suggestedAction: rec.suggestedAction,
-    expectedImpact: rec.expectedImpact,
-    formula: rec.formula,
-    manualPath: rec.how_to_apply,
-    normalizedKey: rec.normalized_key,
-    qualityLabel: rec.quality_label,
-    confidenceScore: rec.confidence_score,
-    guardrailStatus: rec.guardrail_status,
-    guardrailReasons: rec.guardrail_reasons,
-    evidence: rec.evidence,
-    automationAllowed: rec.automation_allowed,
-    manualOnly: rec.isManualOnly,
-  };
+  return formatCurrency(value);
 }
 
 export function RecommendationCard({
@@ -110,7 +51,7 @@ export function RecommendationCard({
   const bidChangePct = rec.current_bid && rec.suggested_bid
     ? ((rec.suggested_bid - rec.current_bid) / rec.current_bid) * 100
     : null;
-  const actionPreview = recommendationToAction(rec);
+  const actionPreview = recommendationToActionPreview(rec);
 
   const impactColor = rec.impact === "High"
     ? "bg-red-100 text-red-600"

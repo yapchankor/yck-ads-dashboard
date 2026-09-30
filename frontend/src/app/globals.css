@@ -14,9 +14,17 @@
   --color-accent-primary: #1E3F36; /* Dark Forest Green */
   --color-accent-lime: #D7F7C2; /* Active Lime Green */
   --color-accent-salmon: #FF8C73; /* Coral/Salmon Red */
-  
+
   --color-accent-green: #38A169;
   --color-accent-red: #E53E3E;
+
+  /* Multi-tenant tokens (per-client values injected on :root at runtime via client-config).
+     Defaults below keep the standalone YCK build safe if injection is ever absent. */
+  --color-accent-orange: #1E3F36; /* Genera hero orange; mirrors primary for YCK */
+  --color-sidebar: #FFFFFF;        /* YCK sidebar is light (= surface) */
+  --color-sidebar-hover: #F8F9FA;
+  --color-chart-google: #2F9E44;   /* Campaign Performance Google series */
+  --color-chart-meta: #1E3F36;     /* Campaign Performance Meta series */
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);

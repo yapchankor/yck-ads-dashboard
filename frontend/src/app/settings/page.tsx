@@ -1,7 +1,8 @@
 "use client";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { CheckCircle2, Clock, FileText, Mail, Save, Users } from "lucide-react";
+import { activeClientKey, clientTimezone, currencySymbol } from "@/lib/client-config";
+import { AlertCircle, CheckCircle2, Clock, FileText, Globe, Mail, Save, Users } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 
 type EmailReportSettings = {
@@ -26,14 +27,14 @@ const defaultEmailSettings: EmailReportSettings = {
   frequency: "weekly",
   send_day: "Monday",
   send_time: "08:00",
-  timezone: "Asia/Kuala_Lumpur",
+  timezone: clientTimezone(),
   subject: "Weekly Ad Performance Report - {client_name}",
   message:
     "Hello {client_name},\n\n" +
     "Your advertising performance report is ready.\n\n" +
-    "Total Spend: RM {total_spend}\n" +
+    `Total Spend: ${currencySymbol()}{total_spend}\n` +
     "Total Conversions: {total_conversions}\n" +
-    "Average CPA: RM {avg_cpa}\n\n" +
+    `Average CPA: ${currencySymbol()}{avg_cpa}\n\n` +
     "Detailed reports are attached.",
   attachments: {
     google_html: true,
@@ -43,6 +44,42 @@ const defaultEmailSettings: EmailReportSettings = {
 };
 
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+// Common IANA timezones for the report scheduler. The active client's default is always
+// included via clientTimezone() so the selector never shows an option the backend can't honour.
+const timezoneOptions = Array.from(
+  new Set([
+    clientTimezone(),
+    "Asia/Kuala_Lumpur",
+    "Asia/Singapore",
+    "Europe/London",
+    "Europe/Paris",
+    "America/New_York",
+    "America/Los_Angeles",
+    "Australia/Sydney",
+    "UTC",
+  ]),
+);
+
+// Per-client storage key so settings don't bleed across tenants on a shared/preview origin.
+const STORAGE_KEY = `adspulse-email-report-settings:${activeClientKey()}`;
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(value: string) {
+  return EMAIL_PATTERN.test(value);
+}
+
+// send_day is reused across frequencies (weekday name for weekly, day-of-month for monthly).
+// Reset it to a valid value for the target frequency so a stale value can't silently break the
+// backend schedule check (which never matches a day-of-month against a weekday name).
+function normalizeSendDay(frequency: EmailReportSettings["frequency"], current: string) {
+  if (frequency === "monthly") {
+    const day = parseInt(current, 10);
+    return Number.isFinite(day) && day >= 1 && day <= 28 ? String(day) : "1";
+  }
+  return weekdays.includes(current) ? current : "Monday";
+}
 
 function parseRecipients(value: string) {
   return value
@@ -55,7 +92,7 @@ function loadLocalEmailSettings() {
   if (typeof window === "undefined") return defaultEmailSettings;
 
   try {
-    const saved = window.localStorage.getItem("yck-email-report-settings");
+    const saved = window.localStorage.getItem(STORAGE_KEY);
     if (!saved) return defaultEmailSettings;
     const parsed = JSON.parse(saved);
     return {
@@ -83,13 +120,14 @@ export default function SettingsPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [deliveryStatus, setDeliveryStatus] = useState<string>("Saved schedule is checked hourly when deployed.");
 
   // Generate Report Now state
   const [reportRange, setReportRange] = useState<"7" | "30" | "90">("30");
   const [reportEmail, setReportEmail] = useState("");
   const reportEmailPrefilledRef = useRef(false);
-  const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done" | "error">("idle");
+  const [reportStatus, setReportStatus] = useState<"idle" | "generating" | "done" | "pending" | "error">("idle");
   const [reportError, setReportError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -105,8 +143,8 @@ export default function SettingsPage() {
         if (dashboardResponse.ok) {
           const data = await dashboardResponse.json();
           setClientInfo({
-            customer_id: data.customer_id || "7867388610",
-            facebook_ad_account_id: data.facebook_ad_account_id || "act_717673122125428",
+            customer_id: data.customer_id || "",
+            facebook_ad_account_id: data.facebook_ad_account_id || "",
           });
         }
 
@@ -122,6 +160,7 @@ export default function SettingsPage() {
           };
           setEmailSettings(nextSettings);
           setRecipientText((nextSettings.recipients || []).join("\n"));
+          setHasUnsavedChanges(false);
           if (data.delivery?.scheduler) {
             setDeliveryStatus(`${data.delivery.scheduler}: ${data.delivery.status || "available"}.`);
           }
@@ -150,7 +189,7 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem("yck-email-report-settings", JSON.stringify(emailSettings));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(emailSettings));
   }, [emailSettings]);
 
   useEffect(() => {
@@ -168,7 +207,15 @@ export default function SettingsPage() {
   function updateEmailSettings(update: Partial<EmailReportSettings>) {
     setSettingsMessage(null);
     setSettingsError(null);
+    setHasUnsavedChanges(true);
     setEmailSettings((current) => ({ ...current, ...update }));
+  }
+
+  function updateFrequency(frequency: EmailReportSettings["frequency"]) {
+    updateEmailSettings({
+      frequency,
+      send_day: normalizeSendDay(frequency, emailSettings.send_day),
+    });
   }
 
   async function generateReport() {
@@ -202,19 +249,28 @@ export default function SettingsPage() {
       if (!response.ok) {
         throw new Error(payload.error || "Failed to generate report");
       }
+      let succeeded = false;
       if (payload.job_id) {
         for (let i = 0; i < 60; i++) {
           await new Promise((resolve) => setTimeout(resolve, i === 0 ? 2000 : 5000));
           const statusResponse = await fetch(`/api/refresh-status?job_id=${encodeURIComponent(payload.job_id)}`);
           if (!statusResponse.ok) break;
           const statusPayload = await statusResponse.json();
-          if (statusPayload.status === "succeeded") break;
+          if (statusPayload.status === "succeeded") {
+            succeeded = true;
+            break;
+          }
           if (statusPayload.status === "failed") {
             throw new Error((statusPayload.errors || []).join("; ") || "Report generation failed");
           }
         }
+      } else {
+        // No job to poll (fire-and-forget backend); treat the accepted request as queued.
+        succeeded = true;
       }
-      setReportStatus("done");
+      // If we polled a job but never observed "succeeded", it is still processing — don't
+      // claim success. Surface a distinct "still processing" state instead.
+      setReportStatus(succeeded ? "done" : "pending");
     } catch (err) {
       setReportStatus("error");
       setReportError(err instanceof Error ? err.message : "Failed to generate report");
@@ -222,11 +278,22 @@ export default function SettingsPage() {
   }
 
   async function saveEmailSettings() {
-    setSavingSettings(true);
     setSettingsMessage(null);
     setSettingsError(null);
 
     const recipients = parseRecipients(recipientText);
+
+    const invalid = recipients.filter((address) => !isValidEmail(address));
+    if (invalid.length > 0) {
+      setSettingsError(`Invalid email ${invalid.length === 1 ? "address" : "addresses"}: ${invalid.join(", ")}`);
+      return;
+    }
+    if (emailSettings.enabled && recipients.length === 0) {
+      setSettingsError("Add at least one recipient before enabling email reports.");
+      return;
+    }
+
+    setSavingSettings(true);
     const nextSettings = { ...emailSettings, recipients };
     setEmailSettings(nextSettings);
 
@@ -243,6 +310,7 @@ export default function SettingsPage() {
       }
 
       setSettingsMessage("Email settings saved.");
+      setHasUnsavedChanges(false);
       if (payload.settings) {
         setEmailSettings({
           ...defaultEmailSettings,
@@ -280,13 +348,17 @@ export default function SettingsPage() {
                   <div>
                     <h3 className="font-bold text-foreground">Google Ads</h3>
                     <p className="text-xs font-medium text-text-muted">
-                      Connected: <span className="text-accent-primary font-bold">MCC Account (ID: {clientInfo?.customer_id || "786-738-8610"})</span>
+                      {clientInfo?.customer_id ? (
+                        <>Connected: <span className="text-accent-primary font-bold">MCC Account (ID: {clientInfo.customer_id})</span></>
+                      ) : (
+                        <span className="font-bold">Not connected</span>
+                      )}
                     </p>
                   </div>
                 </div>
-                <button className="px-4 py-2 text-sm font-bold text-accent-red hover:bg-accent-red/10 rounded-xl transition-colors">
-                  Disconnect
-                </button>
+                <span className="px-3 py-1 text-xs font-bold text-text-muted bg-surface-hover rounded-lg" title="Connections are managed by Autoflow.">
+                  Managed by Autoflow
+                </span>
               </div>
 
               <div className="flex items-center justify-between p-4 rounded-xl bg-surface-hover/50 border border-border">
@@ -295,13 +367,17 @@ export default function SettingsPage() {
                   <div>
                     <h3 className="font-bold text-foreground">Meta Ads</h3>
                     <p className="text-xs font-medium text-text-muted">
-                      Connected: <span className="text-accent-primary font-bold">Ad Account (ID: {clientInfo?.facebook_ad_account_id || "act_717673122125428"})</span>
+                      {clientInfo?.facebook_ad_account_id ? (
+                        <>Connected: <span className="text-accent-primary font-bold">Ad Account (ID: {clientInfo.facebook_ad_account_id})</span></>
+                      ) : (
+                        <span className="font-bold">Not connected</span>
+                      )}
                     </p>
                   </div>
                 </div>
-                <button className="px-4 py-2 text-sm font-bold text-accent-red hover:bg-accent-red/10 rounded-xl transition-colors">
-                  Disconnect
-                </button>
+                <span className="px-3 py-1 text-xs font-bold text-text-muted bg-surface-hover rounded-lg" title="Connections are managed by Autoflow.">
+                  Managed by Autoflow
+                </span>
               </div>
             </div>
           </section>
@@ -319,6 +395,7 @@ export default function SettingsPage() {
                 <input
                   type="checkbox"
                   className="peer sr-only"
+                  aria-label="Enable scheduled email reports"
                   checked={emailSettings.enabled}
                   onChange={(event) => updateEmailSettings({ enabled: event.target.checked })}
                 />
@@ -334,7 +411,7 @@ export default function SettingsPage() {
                 </span>
                 <select
                   value={emailSettings.frequency}
-                  onChange={(event) => updateEmailSettings({ frequency: event.target.value as EmailReportSettings["frequency"] })}
+                  onChange={(event) => updateFrequency(event.target.value as EmailReportSettings["frequency"])}
                   className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground focus:border-accent-primary focus:outline-none"
                 >
                   <option value="weekly">Weekly</option>
@@ -378,6 +455,25 @@ export default function SettingsPage() {
                   onChange={(event) => updateEmailSettings({ send_time: event.target.value })}
                   className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground focus:border-accent-primary focus:outline-none"
                 />
+              </label>
+            </div>
+
+            <div className="mt-4">
+              <label className="block">
+                <span className="mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-text-muted">
+                  <Globe className="h-3.5 w-3.5" />
+                  Timezone
+                </span>
+                <select
+                  value={emailSettings.timezone}
+                  onChange={(event) => updateEmailSettings({ timezone: event.target.value })}
+                  className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm font-medium text-foreground focus:border-accent-primary focus:outline-none md:w-1/2"
+                >
+                  {timezoneOptions.map((tz) => (
+                    <option key={tz} value={tz}>{tz}</option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-xs font-medium text-text-muted">Send time is interpreted in this timezone.</span>
               </label>
             </div>
 
@@ -428,8 +524,8 @@ export default function SettingsPage() {
               <legend className="mb-2 text-xs font-bold uppercase tracking-wider text-text-muted">Attachments</legend>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                 {[
-                  ["google_html", "Google report"],
-                  ["meta_html", "Meta report"],
+                  ["google_html", "Google report (PDF)"],
+                  ["meta_html", "Meta report (PDF)"],
                   ["summary_csv", "Summary CSV"],
                 ].map(([key, label]) => (
                   <label key={key} className="flex items-center gap-2 rounded-xl border border-border bg-surface-hover/40 px-3 py-2 text-sm font-bold text-foreground">
@@ -462,12 +558,26 @@ export default function SettingsPage() {
 
             <div className="mt-5 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs font-medium text-text-muted">
-                <CheckCircle2 className="h-4 w-4 text-accent-green" />
-                {loadingSettings ? "Loading report settings..." : "Toggle state is saved locally immediately."}
+                {loadingSettings ? (
+                  <>
+                    <Clock className="h-4 w-4 text-text-muted" />
+                    Loading report settings...
+                  </>
+                ) : hasUnsavedChanges ? (
+                  <>
+                    <AlertCircle className="h-4 w-4 text-accent-orange" />
+                    Unsaved changes — click Save to apply your schedule.
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 text-accent-green" />
+                    All changes saved.
+                  </>
+                )}
               </div>
               <button
                 onClick={saveEmailSettings}
-                disabled={savingSettings}
+                disabled={savingSettings || !hasUnsavedChanges}
                 className="inline-flex items-center gap-2 rounded-xl bg-accent-primary px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-accent-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Save className="h-4 w-4" />
@@ -525,6 +635,12 @@ export default function SettingsPage() {
             <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700 flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
               Report queued — check your email.
+            </div>
+          )}
+          {reportStatus === "pending" && (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700 flex items-center gap-2">
+              <Clock className="h-4 w-4 shrink-0" />
+              Still processing — this report is taking longer than usual. It will arrive by email once it finishes.
             </div>
           )}
           {reportStatus === "error" && reportError && (

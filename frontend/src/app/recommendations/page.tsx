@@ -2,6 +2,7 @@
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { RecommendationCard } from "@/components/ui/RecommendationCard";
+import { currencySymbol } from "@/lib/client-config";
 import React, { useEffect, useState } from "react";
 import { DashboardMetrics, Recommendation } from "@/lib/types";
 
@@ -74,7 +75,8 @@ function removeTrackedRecommendations(recommendations: Recommendation[], tracked
 
 // ── Impact aggregation ──────────────────────────────────────────────────────
 // Uses structured impact_data fields written by the backend (same source as HTML reports).
-// Applies 70% moderate-confidence factor — matching calculate_total_impact.py.
+// Each rec discounts its own numbers by its own confidence_pct; recs without one fall
+// back to CONFIDENCE_FACTOR (0.7). Matches aggregate_total_benefits in calculate_total_impact.py.
 
 const CONFIDENCE_FACTOR = 0.7;
 
@@ -85,6 +87,7 @@ type PlatformImpact = {
   netMonthlyBenefit: number;
   autoCount: number;
   manualCount: number;
+  avgConfidencePct: number;
 };
 
 function computePlatformImpact(recs: Recommendation[]): PlatformImpact {
@@ -94,22 +97,28 @@ function computePlatformImpact(recs: Recommendation[]): PlatformImpact {
   let netMonthlyBenefit = 0;
   let autoCount = 0;
   let manualCount = 0;
+  let confidenceSum = 0;
+  let confidenceCount = 0;
 
   for (const rec of recs) {
     const d = rec.impact_data || {};
-    const savings = (d.monthly_savings || 0) * CONFIDENCE_FACTOR;
-    const convs = (d.additional_conversions_monthly || 0) * CONFIDENCE_FACTOR;
-    const revenue = (d.additional_revenue_monthly || 0) * CONFIDENCE_FACTOR;
-    const spend = (d.additional_spend_monthly || 0) * CONFIDENCE_FACTOR;
+    // Discount by this rec's own confidence; default to the moderate 0.7 when absent.
+    const factor = typeof d.confidence_pct === "number" ? d.confidence_pct / 100 : CONFIDENCE_FACTOR;
+    const savings = (d.monthly_savings || 0) * factor;
+    const convs = (d.additional_conversions_monthly || 0) * factor;
+    const revenue = (d.additional_revenue_monthly || 0) * factor;
+    const spend = (d.additional_spend_monthly || 0) * factor;
     const rawNet = d.net_benefit_monthly || 0;
     const net = rawNet !== 0
-      ? rawNet * CONFIDENCE_FACTOR
+      ? rawNet * factor
       : (savings + revenue - spend);
 
     monthlySavings += savings;
     additionalConversions += convs;
     additionalRevenue += revenue;
     netMonthlyBenefit += net;
+    confidenceSum += factor * 100;
+    confidenceCount++;
 
     if (rec.automation_allowed) autoCount++;
     else manualCount++;
@@ -122,7 +131,15 @@ function computePlatformImpact(recs: Recommendation[]): PlatformImpact {
     netMonthlyBenefit: Math.round(netMonthlyBenefit),
     autoCount,
     manualCount,
+    avgConfidencePct: confidenceCount ? Math.round(confidenceSum / confidenceCount) : 0,
   };
+}
+
+function fmtEnum(value: unknown) {
+  return String(value || "-")
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 // ── Platform icons ──────────────────────────────────────────────────────────
@@ -148,7 +165,7 @@ function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCoun
   const items = [
     impact.monthlySavings > 0 && {
       label: "Monthly Savings",
-      value: `RM ${impact.monthlySavings.toLocaleString()}`,
+      value: `${currencySymbol()}${impact.monthlySavings.toLocaleString()}`,
       sub: "From eliminating waste",
     },
     impact.additionalConversions > 0 && {
@@ -158,12 +175,12 @@ function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCoun
     },
     impact.additionalRevenue > 0 && {
       label: "Additional Revenue",
-      value: `RM ${impact.additionalRevenue.toLocaleString()}`,
+      value: `${currencySymbol()}${impact.additionalRevenue.toLocaleString()}`,
       sub: "From scaling winners",
     },
     impact.netMonthlyBenefit > 0 && {
       label: "Net Monthly Benefit",
-      value: `RM ${impact.netMonthlyBenefit.toLocaleString()}`,
+      value: `${currencySymbol()}${impact.netMonthlyBenefit.toLocaleString()}`,
       sub: "Total value unlock",
     },
   ].filter(Boolean) as { label: string; value: string; sub: string }[];
@@ -174,14 +191,14 @@ function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCoun
         <div>
           <h3 className="text-sm font-bold text-white">Total Expected Impact</h3>
           <p className="text-xs text-white/75 mt-0.5">
-            {recCount} recommendation{recCount !== 1 ? "s" : ""} · moderate confidence (70%)
+            {recCount} recommendation{recCount !== 1 ? "s" : ""} · avg confidence ({impact.avgConfidencePct}%)
           </p>
         </div>
         <p className="text-xs text-white/80 bg-white/10 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap">
           {impact.autoCount} auto-actionable · {impact.manualCount} manual required
         </p>
       </div>
-      <div className={`grid gap-3 ${items.length <= 2 ? "grid-cols-2" : items.length === 3 ? "grid-cols-3" : "grid-cols-2 md:grid-cols-4"}`}>
+      <div className={`grid gap-3 ${items.length === 1 ? "grid-cols-1" : items.length === 2 ? "grid-cols-2" : items.length === 3 ? "grid-cols-3" : "grid-cols-2 md:grid-cols-4"}`}>
         {items.map((item) => (
           <div key={item.label} className="bg-white/15 rounded-xl p-3">
             <p className="text-[11px] text-white/70 mb-1 leading-tight">{item.label}</p>
@@ -198,6 +215,7 @@ function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCoun
 
 export default function RecommendationsPage() {
   const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null);
+  const [googleNativeRecs, setGoogleNativeRecs] = useState<{ type: string; count: number; est_conversions?: number; est_cost_change?: number }[]>([]);
   const [clientName, setClientName] = useState<string | undefined>();
   const [baselineMetrics, setBaselineMetrics] = useState<DashboardMetrics | undefined>();
   const [loading, setLoading] = useState(true);
@@ -214,6 +232,7 @@ export default function RecommendationsPage() {
         const data = await response.json();
         const trackedItems = trackingResponse.ok ? await trackingResponse.json() : [];
         setRecommendations(removeTrackedRecommendations(data.recommendations || [], trackedItems));
+        setGoogleNativeRecs(Array.isArray(data.google_recommendations) ? data.google_recommendations : []);
         setClientName(data.client_name);
         setBaselineMetrics(data.metrics);
       } catch (err) {
@@ -294,6 +313,55 @@ export default function RecommendationsPage() {
                 </div>
               </section>
             )}
+            {/* ── From Google Ads (native) ── */}
+            {googleNativeRecs.length > 0 && (
+              <section className="flex flex-col gap-0">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
+                    <GoogleIcon />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-foreground leading-tight">From Google Ads (native)</h2>
+                    <p className="text-xs text-text-muted">
+                      Pending recommendations from Google&apos;s own engine, grouped by type
+                    </p>
+                  </div>
+                </div>
+                <div className="bg-surface shadow-sm rounded-2xl border border-border/60 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border/60">
+                          <th className="px-4 py-3 text-left font-semibold text-text-muted uppercase tracking-wide bg-surface-hover">Recommendation Type</th>
+                          <th className="px-4 py-3 text-right font-semibold text-text-muted uppercase tracking-wide bg-surface-hover">Pending</th>
+                          <th className="px-4 py-3 text-right font-semibold text-text-muted uppercase tracking-wide bg-surface-hover">Est. conversions</th>
+                          <th className="px-4 py-3 text-right font-semibold text-text-muted uppercase tracking-wide bg-surface-hover">Est. cost change</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {googleNativeRecs.map((rec, i) => (
+                          <tr key={i} className="border-b border-border/40 hover:bg-surface-hover/50 transition-colors">
+                            <td className="px-4 py-3 font-medium text-foreground">{fmtEnum(rec.type)}</td>
+                            <td className="px-4 py-3 text-right tabular-nums">{rec.count.toLocaleString()}</td>
+                            <td className="px-4 py-3 text-right tabular-nums">
+                              {rec.est_conversions != null && rec.est_conversions !== 0
+                                ? `+${rec.est_conversions.toLocaleString(undefined, { maximumFractionDigits: 1 })}`
+                                : "—"}
+                            </td>
+                            <td className={`px-4 py-3 text-right tabular-nums ${rec.est_cost_change != null && rec.est_cost_change < 0 ? "text-green-600" : ""}`}>
+                              {rec.est_cost_change != null && rec.est_cost_change !== 0
+                                ? `${rec.est_cost_change > 0 ? "+" : ""}${currencySymbol()}${rec.est_cost_change.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            )}
+
             {/* ── Google Ads Section ── */}
             <section className="flex flex-col gap-0">
               <div className="flex items-center gap-2.5 mb-4">

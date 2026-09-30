@@ -1,4 +1,5 @@
-import { ActionPreview, ApplyResult, DashboardMetrics } from "@/lib/types";
+import { formatCurrency } from "@/lib/client-config";
+import { ActionPreview, ApplyResult, DashboardMetrics, Recommendation } from "@/lib/types";
 
 export const ACTION_TYPE_LABELS: Record<string, string> = {
   add_negative_keyword: "Add Negative Keyword",
@@ -31,6 +32,63 @@ export const ACTION_TYPE_LABELS: Record<string, string> = {
 
 export function actionTypeLabel(actionType: string) {
   return ACTION_TYPE_LABELS[actionType] || actionType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function recommendationToActionPreview(rec: Recommendation): ActionPreview {
+  return {
+    id: rec.id,
+    title: rec.title,
+    platform: rec.platform,
+    actionType: rec.actionType,
+    impact: rec.impact,
+    targetLabel: rec.keyword || rec.ad_name || rec.segment || rec.placement || rec.location || rec.campaignName,
+    targetId: rec.target_id || rec.campaign_id || rec.adset_id || rec.ad_id || null,
+    targetType: rec.keyword ? "Keyword" : rec.ad_name ? "Ad" : rec.adset_id ? "Ad Set" : rec.campaignName ? "Campaign" : "Target",
+    campaignName: rec.campaignName,
+    campaignId: rec.campaign_id,
+    adGroupName: rec.ad_group_name,
+    adsetId: rec.adset_id,
+    adName: rec.ad_name,
+    adId: rec.ad_id,
+    keyword: rec.keyword,
+    negativeKeywords: rec.negative_keywords,
+    matchType: rec.match_type,
+    segment: rec.segment,
+    segmentType: rec.segment_type,
+    placement: rec.placement,
+    location: rec.location,
+    locationKey: rec.location_key,
+    locationType: rec.location_type,
+    locationId: rec.location_id,
+    device: rec.device,
+    timeSlot: rec.time_slot,
+    bestHours: rec.best_hours,
+    wastedDays: rec.wasted_days,
+    campaignIds: rec.campaign_ids,
+    currentValue: rec.current || (rec.current_bid ? formatCurrency(rec.current_bid) : rec.current_budget ? formatCurrency(rec.current_budget) : null),
+    proposedValue: rec.suggested || rec.suggestedAction || (rec.suggested_bid ? formatCurrency(rec.suggested_bid) : rec.suggested_adjustment),
+    currentBid: rec.current_bid,
+    suggestedBid: rec.suggested_bid,
+    currentBudget: rec.current_budget,
+    budgetBasis: rec.budget_basis,
+    suggestedAdjustment: rec.suggested_adjustment,
+    currentCpa: rec.current_cpa,
+    currentSpend: rec.current_spend,
+    currentPerformance: rec.current_performance,
+    reason: rec.description,
+    suggestedAction: rec.suggestedAction,
+    expectedImpact: rec.expectedImpact,
+    formula: rec.formula,
+    manualPath: rec.how_to_apply,
+    normalizedKey: rec.normalized_key,
+    qualityLabel: rec.quality_label,
+    confidenceScore: rec.confidence_score,
+    guardrailStatus: rec.guardrail_status,
+    guardrailReasons: rec.guardrail_reasons,
+    evidence: rec.evidence,
+    automationAllowed: rec.automation_allowed,
+    manualOnly: rec.isManualOnly,
+  };
 }
 
 export function getApplyErrorMessage(result: unknown) {
