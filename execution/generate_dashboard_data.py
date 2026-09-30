@@ -6,10 +6,16 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import os
 
+from utils import currency_symbol
+
+
 def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=None):
     # Load the metrics
     with open(metrics_file, 'r') as f:
         metrics = json.load(f)
+
+    # Account currency for all money text; "RM " (MYR) default keeps MYR clients identical.
+    cur = currency_symbol(metrics.get('currency_code'))
 
     # Load recommendations
     with open(recs_file, 'r') as f:
@@ -111,6 +117,12 @@ def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=
                 'budget_resource_name': c.get('budget_resource_name'),
                 'budget_name': c.get('budget_name'),
                 'budget_status': c.get('budget_status'),
+                'channel_type': c.get('type'),
+                'search_impression_share': c.get('search_impression_share'),
+                'search_lost_is_budget': c.get('search_lost_is_budget'),
+                'search_lost_is_rank': c.get('search_lost_is_rank'),
+                'search_top_is': c.get('search_top_is'),
+                'search_abs_top_is': c.get('search_abs_top_is'),
             }
             for c in sorted(active_campaigns, key=lambda x: x.get('cost', 0), reverse=True)
         ],
@@ -256,6 +268,14 @@ def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=
         'conversion_value_alert': insights_payload.get('conversion_value_alert'),
         'google_time_performance': insights_payload.get('time_performance', {}),
         'google_geo_analysis': insights_payload.get('geo_performance', {}),
+        'optimization_score': metrics.get('optimization_score'),
+        'google_recommendations': metrics.get('google_recommendations', []),
+        'pmax_campaigns': metrics.get('pmax_campaigns', []),
+        'pmax_asset_groups': metrics.get('pmax_asset_groups', []),
+        'pmax_search_terms': metrics.get('pmax_search_terms', []),
+        'pmax_channels': metrics.get('pmax_channels', []),
+        'rsa_asset_performance': metrics.get('rsa_asset_performance', []),
+        'change_history': metrics.get('change_history', []),
         'insights': [],
         'recommendations': []
     }
@@ -270,7 +290,7 @@ def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=
     dashboard_data['insights'].append({
         'type': 'alert',
         'title': 'Wasted Ad Spend',
-        'description': f'RM {total_wasted:,.2f} spent on {len(wasted_queries)} search queries with zero conversions. Consider adding negative keywords.'
+        'description': f'{cur}{total_wasted:,.2f} spent on {len(wasted_queries)} search queries with zero conversions. Consider adding negative keywords.'
     })
 
     if best_hour is not None:
@@ -295,7 +315,7 @@ def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=
         'title': 'Campaign Status',
         'description': (
             f'{len(enabled_campaigns)} enabled and {len(paused_campaigns)} paused Google campaigns '
-            f'in this data set. Total spend: RM {total_spend:,.2f}.'
+            f'in this data set. Total spend: {cur}{total_spend:,.2f}.'
         )
     })
 
@@ -303,7 +323,7 @@ def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=
         dashboard_data['insights'].append({
             'type': 'alert',
             'title': 'High CPA Alert',
-            'description': f'Cost per conversion is RM {total_spend / total_conversions:,.2f}. Review conversion tracking and keyword targeting.'
+            'description': f'Cost per conversion is {cur}{total_spend / total_conversions:,.2f}. Review conversion tracking and keyword targeting.'
         })
     else:
         dashboard_data['insights'].append({
@@ -317,7 +337,7 @@ def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=
     campaign_id_map = {c.get('name', ''): c.get('id') for c in campaigns}
 
     def format_currency(value):
-        return f"RM {value:.2f}"
+        return f"{cur}{value:.2f}"
 
     def build_bid_copy(keyword_text, current_bid, suggested_bid):
         if not current_bid or not suggested_bid:
@@ -400,6 +420,12 @@ def generate_dashboard_data(metrics_file, recs_file, output_file, insights_file=
         elif action_type == 'ad_copy':
             title = f"Create ad copy: {rec.get('ad_group_name') or 'ad group'}"
             suggested_action = f"Draft and review new responsive search ad copy for {rec.get('ad_group_name') or 'this ad group'}."
+        elif action_type == 'pmax_tracking_check':
+            title = f"Check conversion tracking: {rec.get('campaign_name') or 'Performance Max'}"
+            suggested_action = rec.get('suggested') or "Verify conversion tracking is firing and import offline conversions if needed."
+        elif action_type == 'pmax_budget_pacing':
+            title = f"Review budget pacing: {rec.get('campaign_name') or 'Performance Max'}"
+            suggested_action = rec.get('suggested') or "Review daily budget headroom against performance targets."
 
         # Build recommendation object
         rec_obj = {

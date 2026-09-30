@@ -12,7 +12,7 @@ Output:
 import argparse
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.errors import GoogleAdsException
@@ -112,6 +112,50 @@ def fetch_campaign_metrics(client, customer_id, start_date, end_date):
         raise
 
     return campaigns
+
+
+def fetch_campaign_impression_share(client, customer_id, start_date, end_date):
+    """Fetch Search impression-share metrics per campaign (additive; safe to fail).
+
+    Returns a dict keyed by campaign id. Impression share is only populated for
+    Search/Shopping campaigns; other channel types return zeros from the API.
+    Wrapped so any query incompatibility can never break the core campaign pull.
+    """
+    ga_service = client.get_service("GoogleAdsService")
+
+    query = f"""
+        SELECT
+            campaign.id,
+            metrics.search_impression_share,
+            metrics.search_budget_lost_impression_share,
+            metrics.search_rank_lost_impression_share,
+            metrics.search_top_impression_share,
+            metrics.search_absolute_top_impression_share
+        FROM campaign
+        WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
+            AND campaign.status != 'REMOVED'
+    """
+
+    result = {}
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=query)
+        for batch in response:
+            for row in batch.results:
+                result[row.campaign.id] = {
+                    "search_impression_share": row.metrics.search_impression_share,
+                    "search_lost_is_budget": row.metrics.search_budget_lost_impression_share,
+                    "search_lost_is_rank": row.metrics.search_rank_lost_impression_share,
+                    "search_top_is": row.metrics.search_top_impression_share,
+                    "search_abs_top_is": row.metrics.search_absolute_top_impression_share,
+                }
+    except GoogleAdsException as ex:
+        print(f"Impression share metrics unavailable: {ex.error.code().name}")
+        return {}
+    except Exception as e:
+        print(f"Impression share metrics skipped: {e}")
+        return {}
+
+    return result
 
 
 def fetch_campaign_daily_metrics(client, customer_id, start_date, end_date):
@@ -687,6 +731,38 @@ def fetch_geographic_metrics(client, customer_id, start_date, end_date):
         # Fall back to geographic_view if location_view fails
         return fetch_geographic_metrics_fallback(client, customer_id, start_date, end_date)
 
+    # location_view criterion_ids ARE geo_target_constant IDs. Any that didn't resolve via the
+    # campaign_criterion map above still read "Location {id}" (e.g. "Location 2826" = UK), so
+    # resolve them directly against geo_target_constant.
+    unresolved_ids = {
+        str(row["criterion_id"]) for row in geo_data
+        if row.get("criterion_id") and str(row.get("location_name", "")).startswith("Location ")
+    }
+    if unresolved_ids:
+        resolved = {}
+        try:
+            id_list = ','.join(unresolved_ids)
+            geo_query = f'''
+                SELECT
+                    geo_target_constant.id,
+                    geo_target_constant.name,
+                    geo_target_constant.canonical_name
+                FROM geo_target_constant
+                WHERE geo_target_constant.id IN ({id_list})
+            '''
+            response = ga_service.search_stream(customer_id=customer_id, query=geo_query)
+            for batch in response:
+                for row in batch.results:
+                    resolved[str(row.geo_target_constant.id)] = (
+                        row.geo_target_constant.canonical_name or row.geo_target_constant.name
+                    )
+        except Exception as e:
+            print(f"  Warning: Could not resolve location_view geo names: {e}")
+        for row in geo_data:
+            name = resolved.get(str(row.get("criterion_id")))
+            if name:
+                row["location_name"] = name
+
     return geo_data
 
 
@@ -941,6 +1017,371 @@ def fetch_negative_keywords(client, customer_id):
     return negative_keywords
 
 
+def fetch_optimization_score(client, customer_id):
+    """Account optimization score + pending recommendation types (additive; safe to fail)."""
+    ga_service = client.get_service("GoogleAdsService")
+    result = {"optimization_score": None, "recommendations": [], "currency_code": None}
+
+    try:
+        resp = ga_service.search_stream(
+            customer_id=customer_id,
+            query="SELECT customer.optimization_score, customer.currency_code FROM customer",
+        )
+        for batch in resp:
+            for row in batch.results:
+                result["optimization_score"] = row.customer.optimization_score
+                result["currency_code"] = row.customer.currency_code
+    except Exception as e:
+        print(f"Optimization score unavailable: {e}")
+
+    try:
+        resp = ga_service.search_stream(
+            customer_id=customer_id,
+            # impact is a selectable MESSAGE; its leaf metrics aren't individually
+            # selectable, so pull the whole message and read nested fields.
+            query="SELECT recommendation.type, recommendation.impact FROM recommendation",
+        )
+        # Per type: count + Google's own quantified impact (potential - base).
+        agg = {}
+        for batch in resp:
+            for row in batch.results:
+                t = row.recommendation.type.name
+                a = agg.setdefault(t, {"count": 0, "est_conversions": 0.0, "est_cost_change": 0.0})
+                a["count"] += 1
+                impact = row.recommendation.impact
+                a["est_conversions"] += (
+                    impact.potential_metrics.conversions - impact.base_metrics.conversions
+                )
+                a["est_cost_change"] += (
+                    impact.potential_metrics.cost_micros - impact.base_metrics.cost_micros
+                ) / 1e6
+        result["recommendations"] = [
+            {
+                "type": t,
+                "count": a["count"],
+                "est_conversions": round(a["est_conversions"], 2),
+                "est_cost_change": round(a["est_cost_change"], 2),
+            }
+            for t, a in sorted(agg.items(), key=lambda x: -x[1]["count"])
+        ]
+    except Exception as e:
+        print(f"Recommendations unavailable: {e}")
+        # Degrade to type + count only (some rec types omit impact metrics).
+        try:
+            resp = ga_service.search_stream(
+                customer_id=customer_id,
+                query="SELECT recommendation.type FROM recommendation",
+            )
+            counts = {}
+            for batch in resp:
+                for row in batch.results:
+                    t = row.recommendation.type.name
+                    counts[t] = counts.get(t, 0) + 1
+            result["recommendations"] = [
+                {"type": t, "count": n}
+                for t, n in sorted(counts.items(), key=lambda x: -x[1])
+            ]
+        except Exception as e2:
+            print(f"Recommendations fallback unavailable: {e2}")
+
+    return result
+
+
+def fetch_pmax_campaigns(client, customer_id, start_date, end_date):
+    """Performance Max campaigns (additive; safe to fail).
+
+    Classic keyword fetch surfaces these too, but a dedicated pull keeps the PMax
+    dashboard section self-contained and independent of the campaign list ordering.
+    """
+    ga_service = client.get_service("GoogleAdsService")
+
+    query = f"""
+        SELECT
+            campaign.id,
+            campaign.name,
+            campaign.status,
+            campaign.advertising_channel_type,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.ctr,
+            metrics.average_cpc,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value,
+            metrics.cost_per_conversion,
+            campaign_budget.amount_micros
+        FROM campaign
+        WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+            AND campaign.status != 'REMOVED'
+            AND segments.date BETWEEN '{start_date}' AND '{end_date}'
+        ORDER BY metrics.impressions DESC
+    """
+
+    pmax_campaigns = []
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=query)
+        for batch in response:
+            for row in batch.results:
+                cost = row.metrics.cost_micros / 1_000_000
+                pmax_campaigns.append({
+                    "id": row.campaign.id,
+                    "name": row.campaign.name,
+                    "status": row.campaign.status.name,
+                    "type": row.campaign.advertising_channel_type.name,
+                    "impressions": row.metrics.impressions,
+                    "clicks": row.metrics.clicks,
+                    "ctr": row.metrics.ctr,
+                    "avg_cpc": row.metrics.average_cpc / 1_000_000,
+                    "cost": cost,
+                    "conversions": row.metrics.conversions,
+                    "conversion_value": row.metrics.conversions_value,
+                    "cost_per_conversion": row.metrics.cost_per_conversion / 1_000_000 if row.metrics.cost_per_conversion else 0,
+                    "roas": (row.metrics.conversions_value / cost) if cost > 0 else 0,
+                    "daily_budget": row.campaign_budget.amount_micros / 1_000_000,
+                })
+    except Exception as e:
+        print(f"PMax campaigns unavailable: {e}")
+
+    return pmax_campaigns
+
+
+def fetch_pmax_asset_groups(client, customer_id, start_date, end_date):
+    """Performance Max asset-group performance (additive; safe to fail)."""
+    ga_service = client.get_service("GoogleAdsService")
+
+    query = f"""
+        SELECT
+            asset_group.id,
+            asset_group.name,
+            asset_group.status,
+            asset_group.ad_strength,
+            campaign.id,
+            campaign.name,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.ctr,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value
+        FROM asset_group
+        WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
+        ORDER BY metrics.impressions DESC
+    """
+
+    asset_groups = []
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=query)
+        for batch in response:
+            for row in batch.results:
+                cost = row.metrics.cost_micros / 1_000_000
+                asset_groups.append({
+                    "id": row.asset_group.id,
+                    "name": row.asset_group.name,
+                    "status": row.asset_group.status.name,
+                    "ad_strength": row.asset_group.ad_strength.name,
+                    "campaign_id": row.campaign.id,
+                    "campaign_name": row.campaign.name,
+                    "impressions": row.metrics.impressions,
+                    "clicks": row.metrics.clicks,
+                    "ctr": row.metrics.ctr,
+                    "cost": cost,
+                    "conversions": row.metrics.conversions,
+                    "conversion_value": row.metrics.conversions_value,
+                    "cpa": (cost / row.metrics.conversions) if row.metrics.conversions > 0 else 0,
+                })
+    except Exception as e:
+        print(f"PMax asset groups unavailable: {e}")
+
+    return asset_groups
+
+
+def fetch_pmax_search_terms(client, customer_id, campaign_ids, start_date, end_date):
+    """Performance Max keywordless search-term (theme/category) insights (additive; safe to fail).
+
+    The API requires filtering campaign_search_term_insight by a single
+    campaign_id, so we query per PMax campaign and merge the results.
+    """
+    ga_service = client.get_service("GoogleAdsService")
+    search_terms = []
+
+    for cid in campaign_ids:
+        query = f"""
+            SELECT
+                campaign_search_term_insight.category_label,
+                campaign_search_term_insight.id,
+                campaign_search_term_insight.campaign_id,
+                metrics.impressions,
+                metrics.clicks,
+                metrics.conversions,
+                metrics.conversions_value
+            FROM campaign_search_term_insight
+            WHERE campaign_search_term_insight.campaign_id = {cid}
+                AND segments.date BETWEEN '{start_date}' AND '{end_date}'
+            ORDER BY metrics.impressions DESC
+        """
+        try:
+            response = ga_service.search_stream(customer_id=customer_id, query=query)
+            for batch in response:
+                for row in batch.results:
+                    label = row.campaign_search_term_insight.category_label
+                    search_terms.append({
+                        "category_label": label if label else "(Uncategorized)",
+                        "campaign_id": row.campaign_search_term_insight.campaign_id,
+                        "impressions": row.metrics.impressions,
+                        "clicks": row.metrics.clicks,
+                        "conversions": row.metrics.conversions,
+                        "conversion_value": row.metrics.conversions_value,
+                    })
+        except Exception as e:
+            print(f"PMax search-term insights unavailable for campaign {cid}: {e}")
+
+    return search_terms
+
+
+def fetch_pmax_channels(client, customer_id, start_date, end_date):
+    """PMax per-channel breakdown via ad_network_type segmentation (additive; safe to fail).
+
+    Google historically does not expose a true Search/YouTube/Display split for PMax;
+    this ad_network_type segmentation is a best-effort proxy and may return nothing.
+    """
+    ga_service = client.get_service("GoogleAdsService")
+
+    query = f"""
+        SELECT
+            campaign.id,
+            campaign.name,
+            segments.ad_network_type,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value
+        FROM campaign
+        WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+            AND campaign.status != 'REMOVED'
+            AND segments.date BETWEEN '{start_date}' AND '{end_date}'
+        ORDER BY metrics.impressions DESC
+    """
+
+    channels = []
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=query)
+        for batch in response:
+            for row in batch.results:
+                channels.append({
+                    "campaign_id": row.campaign.id,
+                    "campaign_name": row.campaign.name,
+                    "channel": row.segments.ad_network_type.name,
+                    "impressions": row.metrics.impressions,
+                    "clicks": row.metrics.clicks,
+                    "cost": row.metrics.cost_micros / 1_000_000,
+                    "conversions": row.metrics.conversions,
+                    "conversion_value": row.metrics.conversions_value,
+                })
+    except Exception as e:
+        print(f"PMax channel breakdown unavailable: {e}")
+
+    return channels
+
+
+def fetch_rsa_asset_performance(client, customer_id, start_date, end_date):
+    """Per-asset (headline/description) performance labels for RSAs (additive; safe to fail)."""
+    ga_service = client.get_service("GoogleAdsService")
+
+    query = f"""
+        SELECT
+            ad_group_ad_asset_view.performance_label,
+            ad_group_ad_asset_view.field_type,
+            asset.text_asset.text,
+            ad_group.name,
+            campaign.name,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.conversions
+        FROM ad_group_ad_asset_view
+        WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
+            AND ad_group_ad_asset_view.field_type IN ('HEADLINE', 'DESCRIPTION')
+        ORDER BY metrics.impressions DESC
+    """
+
+    # Cap to the top assets by impressions (rows arrive ordered) to bound the
+    # payload — large accounts have thousands of RSA assets. Google only assigns a
+    # strength label (LOW/GOOD/BEST/LEARNING) to eligible assets; the rest come back
+    # NOT_APPLICABLE, so we keep all labels and colour-code on the frontend when rated.
+    max_rows = 200
+
+    assets = []
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=query)
+        for batch in response:
+            for row in batch.results:
+                assets.append({
+                    "text": row.asset.text_asset.text,
+                    "field_type": row.ad_group_ad_asset_view.field_type.name,
+                    "performance_label": row.ad_group_ad_asset_view.performance_label.name,
+                    "ad_group_name": row.ad_group.name,
+                    "campaign_name": row.campaign.name,
+                    "impressions": row.metrics.impressions,
+                    "clicks": row.metrics.clicks,
+                    "conversions": row.metrics.conversions,
+                })
+                if len(assets) >= max_rows:
+                    break
+            if len(assets) >= max_rows:
+                break
+    except Exception as e:
+        print(f"RSA asset performance unavailable: {e}")
+
+    return assets
+
+
+def fetch_change_history(client, customer_id):
+    """Recent account changes, last 30 days (API caps at 30d / 10k rows; additive, safe to fail)."""
+    ga_service = client.get_service("GoogleAdsService")
+
+    # API requires a bounded change_date_time range within the last 30 days
+    # (a single-sided bound is rejected as an infinite range).
+    since = (datetime.now() - timedelta(days=29)).strftime("%Y-%m-%d %H:%M:%S")
+    until = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    query = f"""
+        SELECT
+            change_event.change_date_time,
+            change_event.user_email,
+            change_event.change_resource_type,
+            change_event.resource_change_operation,
+            change_event.client_type,
+            change_event.changed_fields
+        FROM change_event
+        WHERE change_event.change_date_time >= '{since}'
+            AND change_event.change_date_time <= '{until}'
+        ORDER BY change_event.change_date_time DESC
+        LIMIT 500
+    """
+
+    changes = []
+    try:
+        response = ga_service.search_stream(customer_id=customer_id, query=query)
+        for batch in response:
+            for row in batch.results:
+                ce = row.change_event
+                try:
+                    fields = list(ce.changed_fields.paths)
+                except Exception:
+                    fields = []
+                changes.append({
+                    "change_date_time": ce.change_date_time,
+                    "user_email": ce.user_email,
+                    "resource_type": ce.change_resource_type.name,
+                    "operation": ce.resource_change_operation.name,
+                    "client_type": ce.client_type.name,
+                    "changed_fields": fields,
+                })
+    except Exception as e:
+        print(f"Change history unavailable: {e}")
+
+    return changes
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch Google Ads performance metrics")
     parser.add_argument("--customer_id", required=True, help="Google Ads customer ID (without dashes)")
@@ -962,6 +1403,11 @@ def main():
 
     print("  - Fetching campaign metrics...")
     campaigns = fetch_campaign_metrics(client, args.customer_id, args.start_date, args.end_date)
+
+    print("  - Fetching impression share...")
+    impression_share = fetch_campaign_impression_share(client, args.customer_id, args.start_date, args.end_date)
+    for c in campaigns:
+        c.update(impression_share.get(c["id"], {}))
 
     print("  - Fetching daily campaign metrics...")
     campaign_daily = fetch_campaign_daily_metrics(client, args.customer_id, args.start_date, args.end_date)
@@ -993,6 +1439,28 @@ def main():
     print("  - Fetching negative keywords...")
     negative_keywords = fetch_negative_keywords(client, args.customer_id)
 
+    print("  - Fetching optimization score & recommendations...")
+    optimization = fetch_optimization_score(client, args.customer_id)
+
+    print("  - Fetching Performance Max campaigns...")
+    pmax_campaigns = fetch_pmax_campaigns(client, args.customer_id, args.start_date, args.end_date)
+
+    print("  - Fetching Performance Max asset groups...")
+    pmax_asset_groups = fetch_pmax_asset_groups(client, args.customer_id, args.start_date, args.end_date)
+
+    print("  - Fetching Performance Max search-term insights...")
+    pmax_campaign_ids = [c["id"] for c in pmax_campaigns]
+    pmax_search_terms = fetch_pmax_search_terms(client, args.customer_id, pmax_campaign_ids, args.start_date, args.end_date)
+
+    print("  - Fetching Performance Max channel breakdown...")
+    pmax_channels = fetch_pmax_channels(client, args.customer_id, args.start_date, args.end_date)
+
+    print("  - Fetching RSA per-asset performance...")
+    rsa_asset_performance = fetch_rsa_asset_performance(client, args.customer_id, args.start_date, args.end_date)
+
+    print("  - Fetching account change history...")
+    change_history = fetch_change_history(client, args.customer_id)
+
     # Compile all data
     metrics_data = {
         "customer_id": args.customer_id,
@@ -1009,6 +1477,15 @@ def main():
         "device_performance": device_performance,
         "negative_keywords": negative_keywords,
         "google_negative_keywords": negative_keywords,
+        "optimization_score": optimization.get("optimization_score"),
+        "google_recommendations": optimization.get("recommendations", []),
+        "currency_code": optimization.get("currency_code"),
+        "pmax_campaigns": pmax_campaigns,
+        "pmax_asset_groups": pmax_asset_groups,
+        "pmax_search_terms": pmax_search_terms,
+        "pmax_channels": pmax_channels,
+        "rsa_asset_performance": rsa_asset_performance,
+        "change_history": change_history,
         "date_range": {
             "start_date": args.start_date,
             "end_date": args.end_date,
@@ -1024,6 +1501,11 @@ def main():
             "total_time_segments": len(time_performance),
             "total_device_segments": len(device_performance),
             "total_negative_keywords": len(negative_keywords),
+            "total_pmax_campaigns": len(pmax_campaigns),
+            "total_pmax_asset_groups": len(pmax_asset_groups),
+            "total_pmax_search_terms": len(pmax_search_terms),
+            "total_rsa_assets": len(rsa_asset_performance),
+            "total_change_events": len(change_history),
             "total_campaign_daily_rows": len(campaign_daily),
             "total_ad_group_daily_rows": len(ad_group_daily),
             "total_impressions": sum(c["impressions"] for c in campaigns),

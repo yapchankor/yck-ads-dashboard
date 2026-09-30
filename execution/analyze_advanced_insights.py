@@ -9,7 +9,7 @@ import os
 from collections import defaultdict
 
 
-def analyze_search_queries(search_queries, keywords):
+def analyze_search_queries(search_queries, keywords, currency_symbol="RM "):
     """
     Analyze search queries to find wasted spend and suggest negative keywords.
 
@@ -22,6 +22,7 @@ def analyze_search_queries(search_queries, keywords):
         return {
             "total_queries": 0,
             "wasted_spend_queries": [],
+            "total_wasted_spend": 0,
             "negative_keyword_suggestions": [],
             "insights": ["Search query data not available for this account"]
         }
@@ -81,7 +82,7 @@ def analyze_search_queries(search_queries, keywords):
 
     insights = []
     if len(wasted_queries) > 0:
-        insights.append(f"Found {len(wasted_queries)} search queries with 0 conversions, wasting RM {total_wasted_spend:.2f}")
+        insights.append(f"Found {len(wasted_queries)} search queries with 0 conversions, wasting {currency_symbol}{total_wasted_spend:.2f}")
     if len(negative_suggestions) > 0:
         insights.append(f"Identified {len(negative_suggestions)} negative keyword opportunities")
 
@@ -94,7 +95,7 @@ def analyze_search_queries(search_queries, keywords):
     }
 
 
-def generate_quality_score_roadmap(keywords):
+def generate_quality_score_roadmap(keywords, currency_symbol="RM "):
     """
     Generate a structured improvement plan for low quality scores.
     """
@@ -186,7 +187,7 @@ def generate_quality_score_roadmap(keywords):
         "avg_quality_score": sum(k['quality_score'] for k in low_qs_keywords) / len(low_qs_keywords),
         "total_spend_low_qs": total_cost,
         "improvement_plan": improvement_plan,
-        "expected_impact": f"Estimated monthly savings: RM {monthly_savings:.2f} with QS improvements",
+        "expected_impact": f"Estimated monthly savings: {currency_symbol}{monthly_savings:.2f} with QS improvements",
         "affected_keywords_sample": [
             {
                 "keyword": k['keyword_text'],
@@ -201,71 +202,7 @@ def generate_quality_score_roadmap(keywords):
     }
 
 
-def calculate_roi_impact(recommendations, metrics_summary):
-    """
-    Calculate expected ROI from implementing recommendations.
-    """
-    savings = 0
-    additional_spend = 0
-    additional_conversions = 0
-
-    avg_cpa = metrics_summary.get('total_cost', 0) / max(metrics_summary.get('total_conversions', 1), 1)
-
-    for rec in recommendations:
-        rec_type = rec.get('type')
-
-        if rec_type == 'keyword_action' and rec.get('action') == 'pause':
-            # Savings from pausing underperformers
-            # Estimate: keyword wasted ~30% of daily spend, extrapolate to monthly
-            estimated_monthly_waste = 100  # Conservative estimate per keyword
-            savings += estimated_monthly_waste
-
-        elif rec_type == 'bid_adjustment':
-            current_bid = rec.get('current_bid', 0)
-            suggested_bid = rec.get('suggested_bid', 0)
-
-            if suggested_bid > current_bid:
-                # Increasing bid - estimate additional conversions
-                bid_increase_pct = (suggested_bid - current_bid) / current_bid if current_bid > 0 else 0
-                # Conservative: 50% of bid increase translates to conversion increase
-                conv_increase = bid_increase_pct * 0.5
-                additional_conversions += conv_increase * 4  # Per month estimate
-                additional_spend += conv_increase * 4 * avg_cpa
-            else:
-                # Decreasing bid - savings
-                bid_decrease = current_bid - suggested_bid
-                monthly_savings = bid_decrease * 30 * 10  # Rough estimate
-                savings += monthly_savings
-
-    # Add negative keyword savings
-    neg_keyword_recs = [r for r in recommendations if r.get('type') == 'keyword_action' and r.get('action') == 'add_negative']
-    if neg_keyword_recs:
-        # Each negative keyword saves ~RM 50-100/month in wasted clicks
-        savings += len(neg_keyword_recs) * 75
-
-    # Estimate revenue (assuming avg customer value)
-    avg_customer_value = 200  # Default assumption - should be customized
-    estimated_revenue = additional_conversions * avg_customer_value
-
-    net_benefit = savings + estimated_revenue - additional_spend
-    roi = (net_benefit / max(additional_spend, 1)) if additional_spend > 0 else 0
-
-    return {
-        "monthly_savings": savings,
-        "additional_monthly_spend": additional_spend,
-        "additional_monthly_conversions": additional_conversions,
-        "estimated_monthly_revenue": estimated_revenue,
-        "net_monthly_benefit": net_benefit,
-        "roi_multiplier": roi,
-        "breakdown": {
-            "pause_underperformers": savings * 0.6,  # Rough allocation
-            "negative_keywords": len(neg_keyword_recs) * 75,
-            "bid_optimizations": estimated_revenue
-        }
-    }
-
-
-def generate_conversion_value_alert(metrics_summary):
+def generate_conversion_value_alert(metrics_summary, currency_symbol="RM "):
     """Generate alert if conversion value tracking is not set up."""
     total_conv_value = metrics_summary.get('total_conversion_value', 0)
     total_conversions = metrics_summary.get('total_conversions', 0)
@@ -286,7 +223,7 @@ def generate_conversion_value_alert(metrics_summary):
                 "Go to Google Ads > Tools & Settings > Conversions",
                 "Edit each conversion action",
                 "Set 'Value' to either:",
-                "  - Same value for each conversion (e.g., RM 200 avg order)",
+                f"  - Same value for each conversion (e.g., {currency_symbol}200 avg order)",
                 "  - Different value per conversion (pass actual transaction value)",
                 "Test with Google Tag Assistant",
                 "Wait 24-48 hours for data to populate"

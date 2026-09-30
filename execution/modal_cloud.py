@@ -49,6 +49,12 @@ image = (
         "fastapi",
         "uvicorn",
         "pydantic",
+        "playwright>=1.40.0",
+    )
+    # Chromium for HTML->PDF report rendering (page.pdf honors @media print / page-break CSS).
+    .run_commands(
+        "playwright install-deps chromium",
+        "playwright install chromium",
     )
     .add_local_file(project_root / "execution" / "fetch_google_ads_metrics.py", "/root/fetch_google_ads_metrics.py")
     .add_local_file(project_root / "execution" / "fetch_facebook_ads_metrics.py", "/root/fetch_facebook_ads_metrics.py")
@@ -338,6 +344,13 @@ def generate_cross_platform_recommendations(data):
     current_conversions = shift_amount / loser["cpa"] if loser["cpa"] else 0
     additional_conversions = max(0, potential_conversions - current_conversions)
 
+    # Value of the extra conversions gained at the more efficient CPA. Budget is
+    # reallocated (total spend unchanged), so net benefit = that value with no
+    # additional spend. customer_value = 3x CPA fallback matches impact_models.py.
+    customer_value = winner["cpa"] * 3
+    additional_revenue = additional_conversions * customer_value
+    net_benefit = additional_revenue
+
     return [{
         "id": f"cross_platform_budget_shift_{winner_name.lower()}_{loser_name.lower()}",
         "recommendation_id": f"cross_platform_budget_shift_{winner_name.lower()}_{loser_name.lower()}",
@@ -354,8 +367,9 @@ def generate_cross_platform_recommendations(data):
         "impact_data": {
             "monthly_savings": 0,
             "additional_conversions_monthly": additional_conversions,
-            "additional_revenue_monthly": 0,
-            "net_benefit_monthly": 0,
+            "additional_revenue_monthly": additional_revenue,
+            "additional_spend_monthly": 0,
+            "net_benefit_monthly": net_benefit,
             "confidence": "moderate",
             "confidence_pct": 65,
         },
@@ -376,6 +390,20 @@ def save_clients(clients):
     clients_file = Path("/data/clients.json")
     with open(clients_file, "w") as f:
         json.dump(clients, f, indent=2)
+
+def _stamp_client_flags(metrics_file, client_name):
+    """Write per-client impact flags into the fetched metrics summary so the insight
+    builders can read them. Currently: tracked_value_is_revenue (default False → the
+    impact models use the 3× CPA proxy instead of possibly-nominal tracked value)."""
+    try:
+        cfg = json.load(open('/data/clients.json')).get(client_name, {})
+        flag = bool(cfg.get('tracked_value_is_revenue', False))
+        m = json.load(open(metrics_file))
+        m.setdefault('summary', {})['tracked_value_is_revenue'] = flag
+        with open(metrics_file, 'w') as f:
+            json.dump(m, f)
+    except Exception as e:
+        print(f"Client flag stamp skipped for {client_name}: {e}")
     volume.commit()
 
 def update_job_status(job_id, **updates):
@@ -414,7 +442,7 @@ def default_email_settings(client_name, client_data):
         "frequency": "weekly",
         "send_day": "Monday",
         "send_time": "08:00",
-        "timezone": "Asia/Kuala_Lumpur",
+        "timezone": client_data.get("timezone") or "Asia/Kuala_Lumpur",
         "subject": "Weekly Ad Performance Report - {client_name}",
         "message": (
             "Hello {client_name},\n\n"
@@ -1315,8 +1343,14 @@ def generate_client_report(
     dashboards = []
     summary = {}
     errors = []
-    
+    currency_sym = "RM "
+    highlights = {}
+
     sys.path.insert(0, '/root')
+    try:
+        from utils import currency_symbol as _get_cur_sym
+    except Exception:
+        _get_cur_sym = lambda code: "RM "
 
     # 1. GOOGLE ADS
     if customer_id:
@@ -1334,12 +1368,13 @@ def generate_client_report(
                 '--output_dir', '/tmp'
             ]
             metrics_file = fetch_google_ads_metrics.main()
-            
+            _stamp_client_flags(metrics_file, client_name)
+
             customer_id_str = customer_id.replace('-', '')
             insights_file = f"/tmp/insights_enhanced_{customer_id_str}.json"
             recs_file = f"/tmp/recommendations_enhanced_{customer_id_str}.json"
             
-            create_full_insights.create_enhanced_insights(metrics_file, insights_file, recs_file)
+            create_full_insights.create_enhanced_insights(metrics_file, insights_file, recs_file, client_name=client_name)
             
             google_dashboard_path = f"/tmp/google_ads_dashboard_{customer_id_str}.html"
             sys.argv = [
@@ -1347,7 +1382,8 @@ def generate_client_report(
                 '--metrics_file', metrics_file,
                 '--insights_file', insights_file,
                 '--recommendations_file', recs_file,
-                '--output_file', google_dashboard_path
+                '--output_file', google_dashboard_path,
+                '--client_name', client_name
             ]
             create_html_dashboard.main()
 
@@ -1358,15 +1394,24 @@ def generate_client_report(
             shutil.copy2(google_dashboard_path, f"/data/google_ads_dashboard_{customer_id_str}.html")
             volume.commit()
 
-            with open(google_dashboard_path, 'r') as f:
+            with open(google_dashboard_path, 'r', encoding='utf-8') as f:
                 dashboards.append((f"Google_Ads_Report_{client_name}.html", f.read()))
                 
             # Email metrics
-            with open(metrics_file, 'r') as f:
+            with open(metrics_file, 'r', encoding='utf-8') as f:
                 m_data = json.load(f)
                 m_summary = m_data.get('summary', {})
                 summary['google_spend'] = m_summary.get('total_cost', 0)
                 summary['google_conversions'] = m_summary.get('total_conversions', 0)
+                if m_data.get('currency_code'):
+                    currency_sym = _get_cur_sym(m_data.get('currency_code'))
+
+            # Top recommendations for the inline email summary
+            try:
+                with open(recs_file, 'r', encoding='utf-8') as rf:
+                    highlights['Google'] = _top_titles(json.load(rf))
+            except Exception:
+                pass
 
         except SystemExit:
             print(f"ERROR Google Ads: Script exited early")
@@ -1377,8 +1422,17 @@ def generate_client_report(
 
     # 2. FACEBOOK ADS
     if facebook_ad_account_id:
+        _prev_fb_token = os.environ.get('FACEBOOK_ACCESS_TOKEN')
         try:
             print(f"📊 Processing Facebook Ads for {client_name}...")
+            # Per-client Meta token override (client owns its own ad account/portfolio)
+            try:
+                _client_fb_token = json.load(open('/data/clients.json')).get(client_name, {}).get('facebook_access_token')
+            except Exception:
+                _client_fb_token = None
+            if _client_fb_token:
+                os.environ['FACEBOOK_ACCESS_TOKEN'] = _client_fb_token
+                print(f"Using per-client Meta token for {client_name}")
             import fetch_facebook_ads_metrics
             import create_facebook_insights
             import create_facebook_html_dashboard
@@ -1391,7 +1445,8 @@ def generate_client_report(
                 '--output_dir', '/tmp'
             ]
             metrics_file = fetch_facebook_ads_metrics.main()
-            
+            _stamp_client_flags(metrics_file, client_name)
+
             sys.argv = [
                 'create_facebook_insights',
                 '--metrics_file', metrics_file,
@@ -1404,7 +1459,8 @@ def generate_client_report(
                 '--metrics_file', metrics_file,
                 '--insights_file', insights_file,
                 '--recommendations_file', fb_recs_file,
-                '--output_dir', '/tmp'
+                '--output_dir', '/tmp',
+                '--client_name', client_name
             ]
             create_facebook_html_dashboard.main()
             
@@ -1420,15 +1476,25 @@ def generate_client_report(
             shutil.copy2(fb_dashboard_path, f"/data/facebook_ads_dashboard_{fb_id}.html")
             volume.commit()
 
-            with open(fb_dashboard_path, 'r') as f:
+            with open(fb_dashboard_path, 'r', encoding='utf-8') as f:
                 dashboards.append((f"Facebook_Ads_Report_{client_name}.html", f.read()))
                 
             # Email metrics
-            with open(metrics_file, 'r') as f:
+            with open(metrics_file, 'r', encoding='utf-8') as f:
                 fb_data = json.load(f)
                 fb_summary = fb_data.get('summary', {})
                 summary['facebook_spend'] = fb_summary.get('total_spend', 0)
                 summary['facebook_conversions'] = fb_summary.get('total_conversions', 0)
+                fb_cur = fb_data.get('currency_code') or fb_data.get('currency')
+                if fb_cur and currency_sym == "RM ":
+                    currency_sym = _get_cur_sym(fb_cur)
+
+            # Top recommendations for the inline email summary
+            try:
+                with open(fb_recs_file, 'r', encoding='utf-8') as rf:
+                    highlights['Meta'] = _top_titles(json.load(rf))
+            except Exception:
+                pass
 
         except Exception as e:
             print(f"ERROR Facebook Ads: {str(e)}")
@@ -1436,6 +1502,11 @@ def generate_client_report(
         except SystemExit:
             print(f"ERROR Facebook Ads: Script exited early")
             errors.append(f"Facebook Ads: Script exited early")
+        finally:
+            if _prev_fb_token is not None:
+                os.environ['FACEBOOK_ACCESS_TOKEN'] = _prev_fb_token
+            else:
+                os.environ.pop('FACEBOOK_ACCESS_TOKEN', None)
 
     # 3. SEND EMAIL
     if dashboards and send_email and email:
@@ -1447,6 +1518,8 @@ def generate_client_report(
             errors=errors,
             date_range=(start_date, end_date),
             email_settings=email_settings,
+            currency_symbol=currency_sym,
+            highlights=highlights,
         )
     elif dashboards:
         print(f"Data refreshed for {client_name}; email delivery disabled")
@@ -1466,11 +1539,135 @@ def generate_client_report(
 # EMAIL SENDING
 # ============================================================================
 
+def _top_titles(recs_json, n=3):
+    """Pull up to n human-readable recommendation labels from a recs file (list or dict)."""
+    items = recs_json.get("recommendations", []) if isinstance(recs_json, dict) else recs_json
+    titles = []
+    for r in (items or []):
+        if not isinstance(r, dict):
+            continue
+        label = r.get("title") or r.get("action") or r.get("suggested_action")
+        if label:
+            titles.append(label)
+        if len(titles) >= n:
+            break
+    return titles
+
+
+def _render_html_to_pdf(html_content, landscape=False):
+    """Render a full HTML report string to A4 PDF bytes via headless Chromium.
+
+    Chromium renders with print media, so the templates' @media print / page-break rules
+    (avoid splitting cards/rows, repeat table headers) are honored — clean pagination.
+
+    landscape=True widens the page to A4 landscape (~297mm) for wide multi-column tables
+    (e.g. the Meta campaign/ad-set tables) that don't fit in portrait.
+    """
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--no-sandbox"])
+        try:
+            page = browser.new_page()
+            page.set_content(html_content, wait_until="load")
+            page.wait_for_timeout(800)  # let any inline images/fonts settle
+            pdf_bytes = page.pdf(
+                format="A4",
+                landscape=landscape,
+                print_background=True,
+                margin={"top": "12mm", "bottom": "12mm", "left": "10mm", "right": "10mm"},
+            )
+        finally:
+            browser.close()
+    return pdf_bytes
+
+
+def _esc(text):
+    import html as _html
+    return _html.escape(str(text))
+
+
+def _build_inline_summary_html(client_name, start_date, end_date, summary, cur, highlights, intro_text):
+    """Email-safe HTML summary for the message body (table layout + inline styles only).
+
+    Gmail strips <head><style>, gradients and grid, and clips messages over ~102KB, so this
+    stays small and uses inline styles. Full detail rides along as PDF attachments.
+    """
+    def money(v):
+        return f"{cur}{v:,.2f}"
+
+    total_spend = summary.get('google_spend', 0) + summary.get('facebook_spend', 0)
+    total_conv = int(round(summary.get('google_conversions', 0) + summary.get('facebook_conversions', 0)))
+    avg_cpa = total_spend / total_conv if total_conv > 0 else 0
+
+    rows = [
+        ("Total spend", money(total_spend)),
+        ("Conversions", f"{total_conv}"),
+        ("Avg CPA", money(avg_cpa) if total_conv > 0 else "-"),
+    ]
+    if summary.get('google_spend') is not None and summary.get('facebook_spend') is not None:
+        rows.append(("Google spend", money(summary.get('google_spend', 0))))
+        rows.append(("Meta spend", money(summary.get('facebook_spend', 0))))
+
+    metric_rows = "".join(
+        f'<tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #e4e6eb;color:#65676b;font-size:14px;">{_esc(label)}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #e4e6eb;text-align:right;font-weight:700;color:#1c1e21;font-size:14px;">{_esc(value)}</td>'
+        f'</tr>'
+        for label, value in rows
+    )
+
+    alert = ""
+    if total_spend > 0 and total_conv == 0:
+        alert = (
+            '<div style="margin:16px 0;padding:12px 16px;background:#fff3cd;border-left:4px solid #f5a623;'
+            'border-radius:4px;color:#856404;font-size:14px;line-height:1.5;">'
+            '<strong>&#9888; Conversion tracking may be broken.</strong> Spend was recorded with zero '
+            'conversions across the period. This usually means tracking is not firing rather than the '
+            'campaigns failing. See the attached report for detail.'
+            '</div>'
+        )
+
+    highlight_html = ""
+    if highlights:
+        blocks = []
+        for platform, items in highlights.items():
+            clean = [i for i in (items or []) if i]
+            if not clean:
+                continue
+            lis = "".join(f'<li style="margin:4px 0;">{_esc(i)}</li>' for i in clean[:3])
+            blocks.append(
+                f'<div style="margin-top:12px;"><div style="font-weight:700;color:#1c1e21;font-size:14px;">'
+                f'{_esc(platform)} — top recommendations</div>'
+                f'<ul style="margin:6px 0 0 0;padding-left:20px;color:#65676b;font-size:14px;">{lis}</ul></div>'
+            )
+        highlight_html = "".join(blocks)
+
+    intro_html = _esc(intro_text).replace("\n", "<br>") if intro_text else ""
+
+    return (
+        '<div style="font-family:Segoe UI,Tahoma,Arial,sans-serif;max-width:640px;margin:0 auto;color:#1c1e21;">'
+        f'<h2 style="color:#1877F2;font-size:20px;margin:0 0 4px;">{_esc(client_name)} — Ad Performance</h2>'
+        f'<div style="color:#65676b;font-size:13px;margin-bottom:16px;">{_esc(start_date)} to {_esc(end_date)}</div>'
+        + (f'<div style="font-size:14px;line-height:1.6;margin-bottom:16px;">{intro_html}</div>' if intro_html else "")
+        + '<table style="width:100%;border-collapse:collapse;border:1px solid #e4e6eb;border-radius:8px;">'
+        + metric_rows
+        + '</table>'
+        + alert
+        + highlight_html
+        + '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #e4e6eb;color:#65676b;font-size:13px;">'
+        'The full detailed report is attached as a PDF — open it directly on any device.'
+        '</div>'
+        '</div>'
+    )
+
+
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("smtp-creds")]
 )
-def send_email_report(client_name, email, dashboards, summary, errors, date_range, email_settings=None):
+def send_email_report(client_name, email, dashboards, summary, errors, date_range,
+                      email_settings=None, currency_symbol="RM ", highlights=None):
     import smtplib
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
@@ -1478,14 +1675,20 @@ def send_email_report(client_name, email, dashboards, summary, errors, date_rang
     from email.utils import formataddr
 
     start_date, end_date = date_range
+    if hasattr(start_date, "strftime"):
+        start_date = start_date.strftime('%Y-%m-%d')
+    if hasattr(end_date, "strftime"):
+        end_date = end_date.strftime('%Y-%m-%d')
+
+    cur = currency_symbol or "RM "
     total_spend = summary.get('google_spend', 0) + summary.get('facebook_spend', 0)
     total_conv = int(round(summary.get('google_conversions', 0) + summary.get('facebook_conversions', 0)))
     avg_cpa = total_spend / total_conv if total_conv > 0 else 0
     settings = email_settings or {}
     attachments = settings.get("attachments") or {}
 
-    msg = MIMEMultipart()
-    msg['From'] = formataddr(("YCK Ads Dashboard", os.getenv('SMTP_USER')))
+    msg = MIMEMultipart("mixed")
+    msg['From'] = formataddr((f"{client_name.title()} Ads Dashboard", os.getenv('SMTP_USER')))
     msg['To'] = email
     subject_template = settings.get("subject") or "Weekly Ad Performance Report - {client_name}"
     msg['Subject'] = subject_template.format(
@@ -1498,19 +1701,28 @@ def send_email_report(client_name, email, dashboards, summary, errors, date_rang
     body_template = settings.get("message") or (
         "Hello {client_name},\n\n"
         "Your advertising performance report is ready.\n\n"
-        "Total Spend: RM {total_spend}\n"
+        f"Total Spend: {cur}{{total_spend}}\n"
         "Total Conversions: {total_conversions}\n"
-        "Average CPA: RM {avg_cpa}\n\n"
+        f"Average CPA: {cur}{{avg_cpa}}\n\n"
         "Detailed reports are attached."
     )
-    body = body_template.format(
+    plain_body = body_template.format(
         client_name=client_name,
         total_spend=format_metric(total_spend),
         total_conversions=total_conv,
         avg_cpa=format_metric(avg_cpa),
     )
-    msg.attach(MIMEText(body, 'plain'))
 
+    # Body = multipart/alternative: plain-text fallback + email-safe HTML summary.
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(plain_body, 'plain', 'utf-8'))
+    summary_html = _build_inline_summary_html(
+        client_name, start_date, end_date, summary, cur, highlights, plain_body
+    )
+    alt.attach(MIMEText(summary_html, 'html', 'utf-8'))
+    msg.attach(alt)
+
+    # Full reports as PDF attachments (Chromium render). Fall back to HTML if rendering fails.
     for filename, html_content in dashboards:
         is_google = filename.lower().startswith("google")
         is_meta = filename.lower().startswith(("facebook", "meta"))
@@ -1518,9 +1730,18 @@ def send_email_report(client_name, email, dashboards, summary, errors, date_rang
             continue
         if is_meta and not attachments.get("meta_html", True):
             continue
-        attachment = MIMEApplication(html_content.encode('utf-8'), _subtype='html')
-        attachment.add_header('Content-Disposition', 'attachment', filename=filename)
-        msg.attach(attachment)
+        try:
+            # Meta reports have wide 10-column tables -> render landscape so nothing bleeds.
+            pdf_bytes = _render_html_to_pdf(html_content, landscape=is_meta)
+            attachment = MIMEApplication(pdf_bytes, _subtype='pdf')
+            pdf_name = filename.rsplit('.', 1)[0] + '.pdf'
+            attachment.add_header('Content-Disposition', 'attachment', filename=pdf_name)
+            msg.attach(attachment)
+        except Exception as e:
+            print(f"PDF render failed for {filename} ({e}); attaching HTML fallback")
+            attachment = MIMEApplication(html_content.encode('utf-8'), _subtype='html')
+            attachment.add_header('Content-Disposition', 'attachment', filename=filename)
+            msg.attach(attachment)
 
     if attachments.get("summary_csv"):
         csv_content = (
@@ -1591,6 +1812,110 @@ def refresh_client_now(
         start_date=start_date or None,
         end_date=end_date or None,
     )
+
+
+@app.function(volumes={"/data": volume}, image=image)
+def _verify_phase1(client_name: str, customer_id: str = "", facebook_ad_account_id: str = ""):
+    """Read the cached metrics files from the volume and report Phase 1 field coverage.
+
+    IDs are taken from clients.json by default, or from the explicit args when the
+    client is not in the registry (e.g. YCK, which is configured via env/secrets).
+    """
+    import json, os
+    try:
+        c = json.load(open('/data/clients.json')).get(client_name, {})
+    except Exception:
+        c = {}
+    cid = (customer_id or c.get('customer_id') or '').replace('-', '')
+    fbid = (facebook_ad_account_id or c.get('facebook_ad_account_id') or '').replace('act_', '')
+    lines = [f"=== Phase 1 verification for {client_name} ==="]
+
+    gpath = f'/data/google_ads_metrics_{cid}.json'
+    if cid and os.path.exists(gpath):
+        camps = (json.load(open(gpath)).get('campaigns') or [])
+        keys = ["search_impression_share", "search_lost_is_budget", "search_lost_is_rank",
+                "search_top_is", "search_abs_top_is"]
+        present = [k for k in keys if any(k in cc for cc in camps)] if camps else []
+        with_is = [cc for cc in camps if cc.get('search_impression_share')]
+        ok = len(present) == len(keys)
+        lines.append(f"GOOGLE  {'PASS' if ok else 'CHECK'}: {len(camps)} campaigns | new keys found: {present or 'NONE'} | {len(with_is)} with real impression share")
+    else:
+        lines.append(f"GOOGLE  SKIP: no google metrics file (customer_id={cid or 'none'})")
+
+    mpath = f'/data/facebook_ads_metrics_{fbid}.json'
+    if fbid and os.path.exists(mpath):
+        ads = (json.load(open(mpath)).get('ads') or [])
+        keys = ["quality_ranking", "engagement_rate_ranking", "conversion_rate_ranking",
+                "video_3s", "video_p25", "video_p100", "video_thruplays", "outbound_clicks", "landing_page_views"]
+        present = [k for k in keys if any(k in a for a in ads)] if ads else []
+        ok = len(present) == len(keys)
+        lines.append(f"META    {'PASS' if ok else 'CHECK'}: {len(ads)} ads | new keys found: {present or 'NONE'}")
+    else:
+        lines.append(f"META    SKIP: no facebook metrics file (ad_account={fbid or 'none'})")
+
+    return "\n".join(lines)
+
+
+@app.local_entrypoint()
+def verify_phase1(client_name: str, customer_id: str = "", facebook_ad_account_id: str = ""):
+    """Print Phase 1 field-coverage report for a client's cached data. Read-only.
+
+    Pass --customer-id / --facebook-ad-account-id for clients not in clients.json.
+    """
+    print(_verify_phase1.remote(client_name, customer_id, facebook_ad_account_id))
+
+
+@app.function(volumes={"/data": volume}, image=image)
+def _show_clients():
+    """Return each client's Google customer_id and Meta ad-account id from the registry."""
+    import json
+    try:
+        clients = json.load(open('/data/clients.json'))
+    except Exception as e:
+        return f"Could not read clients.json: {e}"
+    lines = [
+        f"{name}: customer_id={c.get('customer_id') or '-'} | facebook_ad_account_id={c.get('facebook_ad_account_id') or '-'}"
+        for name, c in clients.items()
+    ]
+    return "\n".join(lines) or "No clients found."
+
+
+@app.local_entrypoint()
+def show_clients():
+    """Print each client's Google customer_id and Meta ad-account id. Read-only."""
+    print(_show_clients.remote())
+
+
+def build_timeseries(google_daily, meta_daily):
+    """Aggregate per-day spend/conversions across platforms for the Overview trend chart."""
+    from collections import defaultdict
+    days = defaultdict(lambda: {"google_spend": 0.0, "google_conversions": 0.0,
+                                "meta_spend": 0.0, "meta_conversions": 0.0})
+    for r in google_daily or []:
+        d = r.get("date")
+        if not d:
+            continue
+        days[d]["google_spend"] += float(r.get("cost", r.get("spend", 0)) or 0)
+        days[d]["google_conversions"] += float(r.get("conversions", 0) or 0)
+    for r in meta_daily or []:
+        d = r.get("date")
+        if not d:
+            continue
+        days[d]["meta_spend"] += float(r.get("spend", r.get("cost", 0)) or 0)
+        days[d]["meta_conversions"] += float(r.get("conversions", 0) or 0)
+    out = []
+    for d in sorted(days.keys()):
+        row = days[d]
+        out.append({
+            "date": d,
+            "google_spend": round(row["google_spend"], 2),
+            "meta_spend": round(row["meta_spend"], 2),
+            "spend": round(row["google_spend"] + row["meta_spend"], 2),
+            "google_conversions": round(row["google_conversions"], 2),
+            "meta_conversions": round(row["meta_conversions"], 2),
+            "conversions": round(row["google_conversions"] + row["meta_conversions"], 2),
+        })
+    return out
 
 # ============================================================================
 # WEB API ENDPOINTS
@@ -1697,112 +2022,204 @@ def request_text(value):
         return value.strip()
     return str(value).strip()
 
-def summarize_cached_metrics(client_data: dict):
-    """Build a compact current-performance snapshot from cached volume data."""
-    platforms = {}
-    totals = {
-        "total_spend": 0.0,
-        "total_conversions": 0.0,
-        "total_conversion_value": 0.0,
+def _tracking_apply_date(applied_at):
+    """Parse an applied_at timestamp to a date, tolerant of ISO datetime or date-only strings."""
+    if not applied_at:
+        return None
+    try:
+        return datetime.fromisoformat(applied_at).date()
+    except Exception:
+        try:
+            return datetime.strptime(str(applied_at)[:10], "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+def _tracking_window_bounds(apply_date, milestone_day):
+    """Equal-length pre/post windows around the apply day, excluding the apply day itself.
+    pre = [apply-milestone, apply-1], post = [apply+1, apply+milestone]. Non-overlapping."""
+    pre_start = (apply_date - timedelta(days=milestone_day)).strftime("%Y-%m-%d")
+    pre_end = (apply_date - timedelta(days=1)).strftime("%Y-%m-%d")
+    post_start = (apply_date + timedelta(days=1)).strftime("%Y-%m-%d")
+    post_end = (apply_date + timedelta(days=milestone_day)).strftime("%Y-%m-%d")
+    return (pre_start, pre_end), (post_start, post_end)
+
+def _sum_daily_window(rows, date_from, date_to, cost_key, id_key=None, id_value=None):
+    """Sum spend + conversions across daily rows within [date_from, date_to] (ISO date strings),
+    optionally filtered to one entity. Returns None when no rows fall in the window."""
+    spend = 0.0
+    conversions = 0.0
+    matched = 0
+    for row in rows or []:
+        d = row.get("date")
+        if not d or d < date_from or d > date_to:
+            continue
+        if id_key is not None and id_value is not None and str(row.get(id_key)) != str(id_value):
+            continue
+        spend += safe_number(row.get(cost_key))
+        conversions += safe_number(row.get("conversions"))
+        matched += 1
+    if matched == 0:
+        return None
+    return {
+        "spend": round(spend, 2),
+        "conversions": round(conversions, 2),
+        "cpa": round(spend / conversions, 2) if conversions else None,
+        "day_rows": matched,
     }
 
+def _load_platform_metrics(client_data):
+    """Load the cached Google + Meta metric files for a client (may be None if absent)."""
+    google_data = None
+    facebook_data = None
     customer_id = str(client_data.get('customer_id', '')).replace('-', '')
     if customer_id:
         google_data = load_json_if_exists(Path(f"/data/google_ads_metrics_{customer_id}.json"))
-        if google_data:
-            summary = google_data.get('summary', {})
-            spend = safe_number(summary.get('total_cost') or summary.get('total_spend'))
-            conversions = safe_number(summary.get('total_conversions'))
-            conversion_value = safe_number(summary.get('total_conversion_value'))
-            platforms["Google"] = {
-                "spend": round(spend, 2),
-                "conversions": round(conversions, 2),
-                "cpa": round(spend / conversions, 2) if conversions else 0,
-                "conversion_value": round(conversion_value, 2),
-                "fetched_at": google_data.get('fetched_at'),
-                "date_range": google_data.get('date_range'),
-            }
-            totals["total_spend"] += spend
-            totals["total_conversions"] += conversions
-            totals["total_conversion_value"] += conversion_value
-
     facebook_id = str(client_data.get('facebook_ad_account_id', '')).replace('act_', '')
     if facebook_id:
         facebook_data = load_json_if_exists(Path(f"/data/facebook_ads_metrics_{facebook_id}.json"))
-        if facebook_data:
-            summary = facebook_data.get('summary', {})
-            spend = safe_number(summary.get('total_spend'))
-            conversions = safe_number(summary.get('total_conversions'))
-            conversion_value = safe_number(summary.get('total_conversion_value'))
-            platforms["Meta"] = {
-                "spend": round(spend, 2),
-                "conversions": round(conversions, 2),
-                "cpa": round(spend / conversions, 2) if conversions else 0,
-                "conversion_value": round(conversion_value, 2),
-                "fetched_at": facebook_data.get('fetched_at'),
-                "date_range": facebook_data.get('date_range'),
+    return google_data, facebook_data
+
+def _resolve_tracking_entity(record, google_data, facebook_data):
+    """Map an applied recommendation to the specific entity + daily rows to measure. Returns a dict
+    (scope/label/rows/id_key/id_value/cost_key) or None to signal an account-level fallback.
+    Note: negative-keyword / search-term actions have no per-term daily series, so they resolve to
+    their campaign (labelled) or fall through to account-level."""
+    platform = record.get("platform")
+    if platform == "Google" and google_data:
+        if record.get("campaign_id"):
+            return {
+                "scope": "campaign", "label": record.get("title") or "this campaign",
+                "rows": google_data.get("campaign_daily", []),
+                "id_key": "id", "id_value": record.get("campaign_id"), "cost_key": "cost",
             }
-            totals["total_spend"] += spend
-            totals["total_conversions"] += conversions
-            totals["total_conversion_value"] += conversion_value
+    if platform == "Meta" and facebook_data:
+        if record.get("ad_id"):
+            return {
+                "scope": "ad", "label": record.get("ad_name") or "this ad",
+                "rows": facebook_data.get("ad_daily", []),
+                "id_key": "ad_id", "id_value": record.get("ad_id"), "cost_key": "spend",
+            }
+        if record.get("adset_id"):
+            return {
+                "scope": "ad set", "label": record.get("title") or "this ad set",
+                "rows": facebook_data.get("ad_set_daily", []),
+                "id_key": "adset_id", "id_value": record.get("adset_id"), "cost_key": "spend",
+            }
+        if record.get("campaign_id"):
+            return {
+                "scope": "campaign", "label": record.get("title") or "this campaign",
+                "rows": facebook_data.get("campaign_daily", []),
+                "id_key": "campaign_id", "id_value": record.get("campaign_id"), "cost_key": "spend",
+            }
+    return None
 
-    total_spend = totals["total_spend"]
-    total_conversions = totals["total_conversions"]
-    total_conversion_value = totals["total_conversion_value"]
-
+def _account_window_metrics(google_data, facebook_data, date_from, date_to):
+    """Blended account-level spend/conversions across both platforms' campaign daily rows."""
+    parts = []
+    if google_data:
+        parts.append(_sum_daily_window(google_data.get("campaign_daily", []), date_from, date_to, "cost"))
+    if facebook_data:
+        parts.append(_sum_daily_window(facebook_data.get("campaign_daily", []), date_from, date_to, "spend"))
+    parts = [p for p in parts if p]
+    if not parts:
+        return None
+    spend = sum(p["spend"] for p in parts)
+    conversions = sum(p["conversions"] for p in parts)
     return {
-        "total_spend": round(total_spend, 2),
-        "total_conversions": round(total_conversions, 2),
-        "blended_cpa": round(total_spend / total_conversions, 2) if total_conversions else 0,
-        "blended_roas": round(total_conversion_value / total_spend, 2) if total_spend else 0,
-        "platforms": platforms,
+        "spend": round(spend, 2),
+        "conversions": round(conversions, 2),
+        "cpa": round(spend / conversions, 2) if conversions else None,
+        "day_rows": sum(p["day_rows"] for p in parts),
     }
 
 def build_tracking_snapshot(record: dict, client_data: dict, milestone_day: int):
-    baseline = record.get("baseline_metrics", {}) or {}
-    current = summarize_cached_metrics(client_data)
+    """Measure the outcome of an applied change by comparing the targeted entity's CPA in the
+    matched pre-change vs post-change windows (equal length, non-overlapping, computed server-side
+    from the cached daily rows). Falls back to a clearly-labelled account-level comparison when the
+    specific entity's daily rows are unavailable (or the action is account-wide)."""
+    apply_date = _tracking_apply_date(record.get("applied_at"))
+    google_data, facebook_data = _load_platform_metrics(client_data)
 
-    baseline_cpa = safe_number(baseline.get("blended_cpa") or baseline.get("current_cpa"))
-    current_cpa = safe_number(current.get("blended_cpa"))
-    baseline_spend = safe_number(baseline.get("total_spend") or baseline.get("current_spend"))
-    current_spend = safe_number(current.get("total_spend"))
-    baseline_conversions = safe_number(baseline.get("total_conversions"))
-    current_conversions = safe_number(current.get("total_conversions"))
+    scope = "account"
+    entity_label = None
+    pre = post = None
+    window = {"pre": None, "post": None}
 
-    comparison = {
-        "cpa_change_pct": round(((current_cpa - baseline_cpa) / baseline_cpa) * 100, 2) if baseline_cpa else None,
-        "spend_change_pct": round(((current_spend - baseline_spend) / baseline_spend) * 100, 2) if baseline_spend else None,
-        "conversion_change": round(current_conversions - baseline_conversions, 2),
-    }
+    if apply_date:
+        (pre_start, pre_end), (post_start, post_end) = _tracking_window_bounds(apply_date, milestone_day)
+        entity = _resolve_tracking_entity(record, google_data, facebook_data)
+        if entity:
+            pre = _sum_daily_window(entity["rows"], pre_start, pre_end, entity["cost_key"],
+                                    entity["id_key"], entity["id_value"])
+            post = _sum_daily_window(entity["rows"], post_start, post_end, entity["cost_key"],
+                                     entity["id_key"], entity["id_value"])
+            if pre and post:
+                scope = entity["scope"]
+                entity_label = entity["label"]
+        if scope == "account":
+            pre = _account_window_metrics(google_data, facebook_data, pre_start, pre_end)
+            post = _account_window_metrics(google_data, facebook_data, post_start, post_end)
+        window = {
+            "pre": {"start": pre_start, "end": pre_end, "metrics": pre},
+            "post": {"start": post_start, "end": post_end, "metrics": post},
+        }
 
-    if comparison["cpa_change_pct"] is None:
-        summary = f"Day {milestone_day} snapshot captured; CPA baseline unavailable."
+    pre_cpa = pre.get("cpa") if pre else None
+    post_cpa = post.get("cpa") if post else None
+    scope_label = "Account-level" if scope == "account" else scope.capitalize()
+
+    spend_change_pct = None
+    conversion_change = None
+    if pre and post:
+        if pre.get("spend"):
+            spend_change_pct = round(((post.get("spend", 0) - pre.get("spend", 0)) / pre["spend"]) * 100, 2)
+        conversion_change = round(safe_number(post.get("conversions")) - safe_number(pre.get("conversions")), 2)
+
+    if pre_cpa is None or post_cpa is None or pre_cpa == 0:
+        cpa_change_pct = None
+        summary = f"{scope_label} CPA: not enough data to measure by day {milestone_day}."
         outcome_status = "Needs data"
-    elif comparison["cpa_change_pct"] < 0:
-        summary = f"CPA improved {abs(comparison['cpa_change_pct']):.1f}% by day {milestone_day}."
-        outcome_status = "Improved"
-    elif comparison["cpa_change_pct"] > 0:
-        summary = f"CPA worsened {comparison['cpa_change_pct']:.1f}% by day {milestone_day}."
-        outcome_status = "Worse"
     else:
-        summary = f"CPA unchanged by day {milestone_day}."
-        outcome_status = "Flat"
+        cpa_change_pct = round(((post_cpa - pre_cpa) / pre_cpa) * 100, 2)
+        window_note = f"post-change window vs the {milestone_day} days before"
+        if cpa_change_pct < 0:
+            summary = f"{scope_label} CPA improved {abs(cpa_change_pct):.1f}% by day {milestone_day} ({window_note})."
+            outcome_status = "Improved"
+        elif cpa_change_pct > 0:
+            summary = f"{scope_label} CPA worsened {cpa_change_pct:.1f}% by day {milestone_day} ({window_note})."
+            outcome_status = "Worse"
+        else:
+            summary = f"{scope_label} CPA unchanged by day {milestone_day} ({window_note})."
+            outcome_status = "Flat"
 
     return {
         "captured_at": datetime.now().isoformat(),
         "milestone_day": milestone_day,
-        "current_metrics": current,
-        "comparison": comparison,
+        "scope": scope,
+        "entity_label": entity_label,
+        "attribution": "account-level" if scope == "account" else "single-entity",
+        "window": window,
+        "comparison": {
+            "cpa_change_pct": cpa_change_pct,
+            "spend_change_pct": spend_change_pct,
+            "conversion_change": conversion_change,
+            "pre_cpa": pre_cpa,
+            "post_cpa": post_cpa,
+        },
         "actual_impact": {
             "status": outcome_status,
-            "cpa_change_pct": comparison["cpa_change_pct"],
-            "spend_change_pct": comparison["spend_change_pct"],
-            "conversion_change": comparison["conversion_change"],
+            "cpa_change_pct": cpa_change_pct,
+            "spend_change_pct": spend_change_pct,
+            "conversion_change": conversion_change,
         },
         "summary": summary,
     }
 
-def update_tracking_snapshots_impl():
+def update_tracking_snapshots_impl(force=False):
+    """Capture Day 7/14/30 outcome snapshots. Normal runs only advance "Tracking" records and skip
+    milestones already captured. A forced backfill also revisits already-"Completed" records and
+    recomputes every reached milestone, so historical snapshots adopt the current measurement
+    method (windows outside the cache resolve to "Needs data")."""
     tracking_file = Path("/data/tracking.json")
     if not tracking_file.exists():
         return {"updated": 0, "message": "No tracking data found"}
@@ -1811,10 +2228,11 @@ def update_tracking_snapshots_impl():
     with open(tracking_file, 'r') as f:
         tracking_data = json.load(f)
 
+    allowed_statuses = ("Tracking", "Completed") if force else ("Tracking",)
     updated = 0
     changed = False
     for record in tracking_data:
-        if record.get("status") != "Tracking":
+        if record.get("status") not in allowed_statuses:
             continue
 
         client_data = clients.get(record.get("client_name"), {})
@@ -1829,7 +2247,7 @@ def update_tracking_snapshots_impl():
 
         for milestone in (7, 14, 30):
             key = f"day_{milestone}"
-            if days_active >= milestone and key not in snapshots:
+            if days_active >= milestone and (force or key not in snapshots):
                 snapshots[key] = build_tracking_snapshot(record, client_data, milestone)
                 updated += 1
                 changed = True
@@ -2417,6 +2835,7 @@ def get_dashboard_data(client_name: str = None, start_date: str = None, end_date
         data['facebook_ad_account_id'] = client_data.get('facebook_ad_account_id')
         data['fetched_at'] = google_data.get('fetched_at')
         data['google_ads'] = data.get('ads', [])
+        meta_daily_rows = []  # captured below if Meta data is present; used for the trend chart
 
         google_filtered_from_daily = False
         meta_filtered_from_daily = False
@@ -2490,6 +2909,7 @@ def get_dashboard_data(client_name: str = None, start_date: str = None, end_date
                 with open(latest_fb, 'r') as f:
                     fb_data = json.load(f)
                 fb_range = fb_data.get('date_range')
+                meta_daily_rows = fb_data.get('campaign_daily', [])
                 
                 # Merge Facebook campaigns
                 if requested_range:
@@ -2679,6 +3099,12 @@ def get_dashboard_data(client_name: str = None, start_date: str = None, end_date
             data['recommendations'] = filtered_recommendations
         # ------------------------------------------------
 
+        # Daily spend/conversions trend for the Overview chart (Phase 2).
+        data['timeseries'] = build_timeseries(
+            google_data.get('campaign_daily', []),
+            meta_daily_rows,
+        )
+
         return data
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -2729,6 +3155,8 @@ def find_in_volume(query: str):
 def search_volume(query: str):
     res = find_in_volume.remote(query)
     print(f"FOUND '{query}' IN: {res}")
+
+
 
 @app.function(
     image=image,
@@ -2926,11 +3354,17 @@ def scheduled_tracking_snapshots():
     volumes={"/data": volume},
     timeout=300,
 )
-def update_tracking_snapshots():
-    """Manual trigger for tracking snapshot updates."""
-    return update_tracking_snapshots_impl()
+def update_tracking_snapshots(force: bool = False):
+    """Manual trigger for tracking snapshot updates. force=True recomputes existing milestones."""
+    return update_tracking_snapshots_impl(force=force)
 
 @app.local_entrypoint()
 def update_tracking_now():
     result = update_tracking_snapshots.remote()
+    print(result)
+
+@app.local_entrypoint()
+def backfill_tracking_snapshots():
+    """One-time backfill: recompute all existing milestone snapshots with the current method."""
+    result = update_tracking_snapshots.remote(force=True)
     print(result)

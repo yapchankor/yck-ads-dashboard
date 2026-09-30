@@ -20,7 +20,8 @@ def aggregate_total_benefits(recommendations, confidence_level='moderate'):
         'moderate': 0.7,
         'optimistic': 1.0
     }
-    factor = confidence_factors.get(confidence_level, 0.7)
+    # Fallback factor for recs that carry no confidence_pct of their own.
+    default_factor = confidence_factors.get(confidence_level, 0.7)
 
     totals = {
         'total_monthly_savings': 0.0,
@@ -32,10 +33,13 @@ def aggregate_total_benefits(recommendations, confidence_level='moderate'):
         'automatable_count': 0,
         'manual_count': 0,
         'confidence_level': confidence_level,
-        'confidence_factor': factor,
+        'confidence_factor': default_factor,
         'breakdown_by_type': {},
         'breakdown_by_priority': {'high': 0, 'medium': 0, 'low': 0}
     }
+
+    confidence_sum = 0.0
+    confidence_count = 0
 
     # Aggregate impacts
     for rec in recommendations:
@@ -43,6 +47,12 @@ def aggregate_total_benefits(recommendations, confidence_level='moderate'):
         rec_type = rec.get('type', 'unknown')
         priority = rec.get('priority', 'medium')
         automation = rec.get('automation', {})
+
+        # Each rec discounts by its own confidence_pct; fall back to the default factor.
+        conf_pct = impact_data.get('confidence_pct')
+        factor = (conf_pct / 100.0) if isinstance(conf_pct, (int, float)) else default_factor
+        confidence_sum += factor * 100
+        confidence_count += 1
 
         # Apply confidence factor to projections
         monthly_savings = impact_data.get('monthly_savings', 0) * factor
@@ -87,6 +97,8 @@ def aggregate_total_benefits(recommendations, confidence_level='moderate'):
         if priority in totals['breakdown_by_priority']:
             totals['breakdown_by_priority'][priority] += 1
 
+    totals['avg_confidence_pct'] = round(confidence_sum / confidence_count) if confidence_count else 0
+
     return totals
 
 
@@ -103,7 +115,7 @@ def format_total_impact_summary(totals):
     summary = []
 
     summary.append(f"📊 Total Expected Impact ({totals['total_recommendations']} recommendations)")
-    summary.append(f"Confidence Level: {totals['confidence_level'].title()} ({int(totals['confidence_factor'] * 100)}%)")
+    summary.append(f"Average Confidence: {totals.get('avg_confidence_pct', int(totals['confidence_factor'] * 100))}%")
     summary.append("")
 
     summary.append("💰 Financial Impact:")

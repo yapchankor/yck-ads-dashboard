@@ -183,6 +183,47 @@ def format_currency(amount, currency='MYR'):
         return f"{amount:,.2f} {currency}"
 
 
+def currency_symbol(currency='MYR'):
+    """Return the currency prefix used inline in recommendation/insight text.
+
+    A trailing space is included for alphabetic codes (RM, and the fallback
+    "<CODE> " form) so that f"{currency_symbol(code)}{value:.2f}" reproduces the
+    legacy f"RM {value:.2f}" byte-for-byte when the account currency is MYR.
+    Symbol currencies (£, $, €) have no trailing space, matching normal usage.
+    """
+    if not currency:
+        currency = 'MYR'
+    symbols = {'USD': '$', 'MYR': 'RM ', 'EUR': '€', 'GBP': '£'}
+    return symbols.get(str(currency).upper(), f"{str(currency).upper()} ")
+
+
+# Per-client brand colors for report chrome (headers, titles, borders, buttons).
+# Mirrors the dashboard palette in frontend/src/lib/client-config.ts so a client's PDF matches
+# their dashboard. Keyed by the Modal client_name. Unknown clients keep the legacy blue so
+# existing reports are unaffected.
+BRAND_PRIMARY = {
+    'YAP CHAN KOR': '#1E3F36',  # YCK forest green
+    'GENERA': '#0E5C55',        # Genera teal
+}
+DEFAULT_BRAND_PRIMARY = '#1a73e8'
+
+
+def brand_primary(client_name=None):
+    """Return the client's brand primary hex, or the legacy blue if unknown."""
+    if not client_name:
+        return DEFAULT_BRAND_PRIMARY
+    return BRAND_PRIMARY.get(str(client_name).strip().upper(), DEFAULT_BRAND_PRIMARY)
+
+
+def hex_to_rgba(hex_color, alpha=1.0):
+    """Convert '#RRGGBB' to a CSS rgba() string (for light background tints)."""
+    h = str(hex_color).lstrip('#')
+    if len(h) != 6:
+        h = DEFAULT_BRAND_PRIMARY.lstrip('#')
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def format_percentage(value):
     """Format a decimal as percentage."""
     return f"{value:.2%}"

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 
-def analyze_budget_pacing(metrics_data, monthly_budget=None):
+def analyze_budget_pacing(metrics_data, monthly_budget=None, currency_symbol="RM "):
     """
     Analyze budget pacing and forecast end-of-month spend.
 
@@ -84,14 +84,14 @@ def analyze_budget_pacing(metrics_data, monthly_budget=None):
             overspend = projected_monthly_spend - monthly_budget
             pacing_analysis["alerts"].append({
                 "severity": "WARNING",
-                "message": f"Projected to exceed budget by RM {overspend:.2f} ({(overspend/monthly_budget*100):.0f}%)",
-                "recommendation": "Reduce daily spend to RM {:.2f}".format(monthly_budget / days_in_month)
+                "message": f"Projected to exceed budget by {currency_symbol}{overspend:.2f} ({(overspend/monthly_budget*100):.0f}%)",
+                "recommendation": f"Reduce daily spend to {currency_symbol}{monthly_budget / days_in_month:.2f}"
             })
 
     return pacing_analysis
 
 
-def analyze_device_performance(campaigns, keywords, device_rows=None):
+def analyze_device_performance(campaigns, keywords, device_rows=None, currency_symbol="RM "):
     """
     Analyze performance by device type.
     Uses device-segmented Google Ads rows when available.
@@ -158,21 +158,21 @@ def analyze_device_performance(campaigns, keywords, device_rows=None):
             issues.append({
                 "issue": f"{device['device'].replace('_', ' ').title()} Waste",
                 "severity": "MEDIUM",
-                "description": f"RM {device['cost']:.2f} spent on {device['device'].replace('_', ' ').title()} with zero conversions.",
+                "description": f"{currency_symbol}{device['cost']:.2f} spent on {device['device'].replace('_', ' ').title()} with zero conversions.",
                 "recommendation": "Review device bid adjustment or landing-page experience before reducing exposure."
             })
             recommendations.append({
                 "type": "device_bid_adjustment",
                 "device": device["device"],
                 "suggested_adjustment": "-30%",
-                "reason": f"RM {device['cost']:.2f} spent with 0 conversions on {device['device']}",
-                "expected_impact": f"Reduce wasted device spend by up to RM {device['cost'] * 0.3:.0f}/period"
+                "reason": f"{currency_symbol}{device['cost']:.2f} spent with 0 conversions on {device['device']}",
+                "expected_impact": f"Reduce wasted device spend by up to {currency_symbol}{device['cost'] * 0.3:.0f}/period"
             })
         elif account_cpa and device["conversions"] >= 2 and device["cost_per_conversion"] > account_cpa * 1.5:
             issues.append({
                 "issue": f"High CPA on {device['device'].replace('_', ' ').title()}",
                 "severity": "MEDIUM",
-                "description": f"CPA is RM {device['cost_per_conversion']:.2f}, above account average RM {account_cpa:.2f}.",
+                "description": f"CPA is {currency_symbol}{device['cost_per_conversion']:.2f}, above account average {currency_symbol}{account_cpa:.2f}.",
                 "recommendation": "Consider reducing device bids or reviewing mobile/desktop landing-page fit."
             })
 
@@ -299,7 +299,7 @@ def analyze_landing_page_performance(keywords, ads):
     }
 
 
-def analyze_geo_performance(geo_data, campaign_ids=None):
+def analyze_geo_performance(geo_data, campaign_ids=None, currency_symbol="RM "):
     """
     Analyze geographic performance data.
     Identifies best/worst locations, opportunities, and waste.
@@ -337,7 +337,8 @@ def analyze_geo_performance(geo_data, campaign_ids=None):
         'clicks': 0,
         'cost': 0,
         'conversions': 0,
-        'campaigns': set()
+        'campaigns': set(),
+        'resolved_name': None,
     })
 
     for record in geo_data:
@@ -350,11 +351,16 @@ def analyze_geo_performance(geo_data, campaign_ids=None):
         location_stats[loc_id]['cost'] += record.get('cost', 0)
         location_stats[loc_id]['conversions'] += record.get('conversions', 0)
         location_stats[loc_id]['campaigns'].add(record.get('campaign_name', ''))
+        # Prefer the name the fetch layer already resolved (works for any country, not just the
+        # Malaysia-focused static map below). Ignore unresolved "Location {id}" fallbacks.
+        rec_name = record.get('location_name')
+        if rec_name and not str(rec_name).startswith('Location ') and not location_stats[loc_id]['resolved_name']:
+            location_stats[loc_id]['resolved_name'] = rec_name
 
     # Calculate metrics per location
     locations = []
     for loc_id, stats in location_stats.items():
-        location_name = LOCATION_NAMES.get(loc_id, f"Location {loc_id}")
+        location_name = stats.get('resolved_name') or LOCATION_NAMES.get(loc_id, f"Location {loc_id}")
         ctr = (stats['clicks'] / stats['impressions'] * 100) if stats['impressions'] > 0 else 0
         conv_rate = (stats['conversions'] / stats['clicks'] * 100) if stats['clicks'] > 0 else 0
         cpa = (stats['cost'] / stats['conversions']) if stats['conversions'] > 0 else 0
@@ -397,7 +403,7 @@ def analyze_geo_performance(geo_data, campaign_ids=None):
             "issue": "Geographic Waste",
             "severity": "HIGH",
             "locations": [loc['location_name'] for loc in wasted_locations[:3]],
-            "description": f"{len(wasted_locations)} location(s) with zero conversions despite RM {total_waste:.2f} spend",
+            "description": f"{len(wasted_locations)} location(s) with zero conversions despite {currency_symbol}{total_waste:.2f} spend",
             "recommendation": "Consider excluding these locations or reducing bids significantly"
         })
 
@@ -406,8 +412,8 @@ def analyze_geo_performance(geo_data, campaign_ids=None):
                 "type": "geo_exclusion",
                 "location": loc['location_name'],
                 "campaign_ids": campaign_ids or [],
-                "reason": f"RM {loc['cost']:.2f} spent with 0 conversions",
-                "expected_impact": f"Save RM {loc['cost'] * 4:.0f}/month"
+                "reason": f"{currency_symbol}{loc['cost']:.2f} spent with 0 conversions",
+                "expected_impact": f"Save {currency_symbol}{loc['cost'] * 4:.0f}/month"
             })
 
     # Issue 2: High CPA locations
@@ -421,7 +427,7 @@ def analyze_geo_performance(geo_data, campaign_ids=None):
             "issue": "High CPA Locations",
             "severity": "MEDIUM",
             "locations": [loc['location_name'] for loc in expensive_locations[:3]],
-            "description": f"{len(expensive_locations)} location(s) with CPA > RM 30",
+            "description": f"{len(expensive_locations)} location(s) with CPA > {currency_symbol}30",
             "recommendation": "Reduce bids by 30-40% in these locations or improve targeting"
         })
 
@@ -432,8 +438,8 @@ def analyze_geo_performance(geo_data, campaign_ids=None):
                 "campaign_ids": campaign_ids or [],
                 "current_cpa": loc['cost_per_conversion'],
                 "suggested_adjustment": "-35%",
-                "reason": f"CPA of RM {loc['cost_per_conversion']:.2f} is above target",
-                "expected_impact": "Reduce CPA to RM {:.2f}".format(loc['cost_per_conversion'] * 0.7)
+                "reason": f"CPA of {currency_symbol}{loc['cost_per_conversion']:.2f} is above target",
+                "expected_impact": f"Reduce CPA to {currency_symbol}{loc['cost_per_conversion'] * 0.7:.2f}"
             })
 
     # Opportunity: Low CPA locations to scale
@@ -450,7 +456,7 @@ def analyze_geo_performance(geo_data, campaign_ids=None):
                 "campaign_ids": campaign_ids or [],
                 "current_cpa": loc['cost_per_conversion'],
                 "suggested_adjustment": "+25%",
-                "reason": f"Strong performer: {loc['conversions']:.0f} conversions at RM {loc['cost_per_conversion']:.2f} CPA, {loc['conversion_rate']:.1f}% conv rate",
+                "reason": f"Strong performer: {loc['conversions']:.0f} conversions at {currency_symbol}{loc['cost_per_conversion']:.2f} CPA, {loc['conversion_rate']:.1f}% conv rate",
                 "expected_impact": f"Potentially {int(loc['conversions'] * 0.25)} more conversions/week"
             })
 
@@ -469,7 +475,7 @@ def analyze_geo_performance(geo_data, campaign_ids=None):
     }
 
 
-def analyze_time_performance(time_data, campaign_ids=None):
+def analyze_time_performance(time_data, campaign_ids=None, currency_symbol="RM "):
     """
     Analyze performance by hour of day and day of week.
     Identifies best/worst times, wasted spend during low-performing hours, and schedule opportunities.
@@ -595,7 +601,7 @@ def analyze_time_performance(time_data, campaign_ids=None):
             "issue": "Wasted Spend in Low-Performing Hours",
             "severity": "HIGH",
             "hours": hours_list,
-            "description": f"{len(wasted_hours)} hour(s) with zero conversions despite RM {total_waste:.2f} spend",
+            "description": f"{len(wasted_hours)} hour(s) with zero conversions despite {currency_symbol}{total_waste:.2f} spend",
             "recommendation": "Reduce bids by 50-70% during these hours or pause ads completely"
         })
 
@@ -606,8 +612,8 @@ def analyze_time_performance(time_data, campaign_ids=None):
                 "campaign_ids": campaign_ids or [],
                 "current_spend": h['cost'],
                 "suggested_adjustment": "-70%",
-                "reason": f"RM {h['cost']:.2f} spent with 0 conversions during this hour",
-                "expected_impact": f"Save RM {h['cost'] * 4 * 0.7:.0f}/month"
+                "reason": f"{currency_symbol}{h['cost']:.2f} spent with 0 conversions during this hour",
+                "expected_impact": f"Save {currency_symbol}{h['cost'] * 4 * 0.7:.0f}/month"
             })
 
     # Issue 2: Low-performing days
@@ -624,8 +630,8 @@ def analyze_time_performance(time_data, campaign_ids=None):
                 "campaign_ids": campaign_ids or [],
                 "current_spend": d['cost'],
                 "suggested_adjustment": "-50%",
-                "reason": f"RM {d['cost']:.2f} spent with 0 conversions on {d['day']}s",
-                "expected_impact": f"Save RM {d['cost'] * 4 * 0.5:.0f}/month"
+                "reason": f"{currency_symbol}{d['cost']:.2f} spent with 0 conversions on {d['day']}s",
+                "expected_impact": f"Save {currency_symbol}{d['cost'] * 4 * 0.5:.0f}/month"
             })
 
     # Opportunity: High-performing hours to scale
@@ -640,7 +646,7 @@ def analyze_time_performance(time_data, campaign_ids=None):
                 "type": "schedule_bid_adjustment",
                 "time_slot": f"{h['hour_label']}",
                 "campaign_ids": campaign_ids or [],
-                "current_performance": f"{h['conversions']:.0f} conv at RM {h['cost_per_conversion']:.2f} CPA",
+                "current_performance": f"{h['conversions']:.0f} conv at {currency_symbol}{h['cost_per_conversion']:.2f} CPA",
                 "suggested_adjustment": "+30%",
                 "reason": f"Strong performer: {h['conversion_rate']:.1f}% conv rate during this hour",
                 "expected_impact": f"Potentially {max(1, int(h['conversions'] * 0.3))} more conversions/week"
@@ -658,7 +664,7 @@ def analyze_time_performance(time_data, campaign_ids=None):
                 "type": "schedule_bid_adjustment",
                 "time_slot": d['day'],
                 "campaign_ids": campaign_ids or [],
-                "current_performance": f"{d['conversions']:.0f} conv at RM {d['cost_per_conversion']:.2f} CPA",
+                "current_performance": f"{d['conversions']:.0f} conv at {currency_symbol}{d['cost_per_conversion']:.2f} CPA",
                 "suggested_adjustment": "+25%",
                 "reason": f"Strong day: {d['conversion_rate']:.1f}% conv rate on {d['day']}s",
                 "expected_impact": f"Potentially {max(1, int(d['conversions'] * 0.25))} more conversions/week"

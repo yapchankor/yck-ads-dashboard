@@ -10,17 +10,23 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 from calculate_total_impact import aggregate_total_benefits
+from utils import currency_symbol as get_currency_symbol, brand_primary, hex_to_rgba
 
 # Load environment variables
 load_dotenv()
 
-def create_html_dashboard(metrics, insights, recommendations, output_file):
+def create_html_dashboard(metrics, insights, recommendations, output_file, client_name=None):
     """Generate an HTML dashboard with insights and recommendations."""
 
     summary = metrics.get("summary", {})
     date_range = metrics.get("date_range", {})
-    currency = os.getenv("CURRENCY", "MYR")
-    currency_symbol = "RM" if currency == "MYR" else "$" if currency == "USD" else currency
+    # Currency comes from the account itself (metrics currency_code), not a global env var, so
+    # each client's report renders in its own currency. Templates below add a space after the
+    # symbol, so strip the helper's trailing space ("RM " -> "RM") to keep MYR byte-identical.
+    currency_symbol = get_currency_symbol(metrics.get("currency_code") or "MYR").strip()
+    # Brand chrome color (header, titles, borders, buttons) per client; tint for light backgrounds.
+    primary = brand_primary(client_name)
+    primary_tint = hex_to_rgba(primary, 0.08)
 
     html = f"""
 <!DOCTYPE html>
@@ -50,16 +56,16 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }}
         h1 {{
-            color: #1a73e8;
-            border-bottom: 3px solid #1a73e8;
+            color: {primary};
+            border-bottom: 3px solid {primary};
             padding-bottom: 15px;
             margin-bottom: 20px;
         }}
         h2 {{
-            color: #1a73e8;
+            color: {primary};
             margin-top: 30px;
             margin-bottom: 15px;
-            border-left: 4px solid #1a73e8;
+            border-left: 4px solid {primary};
             padding-left: 15px;
         }}
         h3 {{
@@ -68,11 +74,11 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
             margin-bottom: 10px;
         }}
         .date-range {{
-            background: #e8f0fe;
+            background: {primary_tint};
             padding: 10px 20px;
             border-radius: 5px;
             margin-bottom: 20px;
-            color: #1967d2;
+            color: {primary};
             font-weight: 500;
         }}
         .metrics-grid {{
@@ -129,7 +135,7 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
             transition: all 0.3s;
         }}
         .recommendation-card:hover {{
-            border-color: #1a73e8;
+            border-color: {primary};
             box-shadow: 0 4px 12px rgba(26, 115, 232, 0.2);
         }}
         .rec-header {{
@@ -211,16 +217,16 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
             margin: 20px 0;
         }}
         .section-description {{
-            background: #e8f0fe;
+            background: {primary_tint};
             padding: 15px 20px;
             border-radius: 6px;
             margin: 10px 0 20px 0;
-            color: #1967d2;
+            color: {primary};
             line-height: 1.6;
-            border-left: 4px solid #1a73e8;
+            border-left: 4px solid {primary};
         }}
         .btn {{
-            background: #1a73e8;
+            background: {primary};
             color: white;
             border: none;
             padding: 12px 24px;
@@ -231,7 +237,7 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
             margin: 20px 0;
         }}
         .btn:hover {{
-            background: #1557b0;
+            background: {primary};
         }}
         .note {{
             background: #fff3cd;
@@ -314,7 +320,7 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
         /* Formula display */
         .formula-explain {{
             background: #f8f9fa;
-            border-left: 3px solid #1a73e8;
+            border-left: 3px solid {primary};
             padding: 8px;
             margin-top: 8px;
             font-size: 12px;
@@ -324,6 +330,26 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
 
         @media print {{
             .btn {{ display: none; }}
+            @page {{ size: A4; margin: 12mm 10mm; }}
+            /* Never split a card, recommendation, or table row across pages. */
+            .metric-card, .recommendation-card, .insight-box, .issue-box,
+            .total-impact-summary, .section-description, tr {{
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }}
+            h1, h2, h3 {{ page-break-after: avoid; }}
+            /* Repeat table headers on every page a table spans. */
+            thead {{ display: table-header-group; }}
+            /* Fit wide tables within the A4 page: constrain layout, shrink type, wrap long
+               URLs/keywords/campaign names so nothing runs off the right edge. */
+            .container {{ padding: 12px !important; }}
+            table {{ width: 100% !important; table-layout: fixed; }}
+            th, td {{
+                font-size: 9px !important;
+                padding: 4px 3px !important;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }}
         }}
     </style>
 </head>
@@ -703,8 +729,7 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
             <strong>What this shows:</strong> AI-generated action items prioritized by potential impact. Each recommendation includes current vs. suggested values, reasoning, and expected outcomes. These are ranked from highest to lowest impact—tackle them in order for maximum ROI improvement.
         </div>
         <div class="note">
-            <strong>Note:</strong> Review each recommendation below. To apply these changes, inform your account manager or use the
-            <code>apply_google_ads_changes.py</code> script with the JSON file.
+            <strong>Note:</strong> Review each recommendation below. To apply any of these changes, contact your account manager.
         </div>
 """
 
@@ -712,13 +737,18 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
         rec_type = rec.get('type', 'unknown')
         type_class = 'bid' if 'bid' in rec_type else 'keyword' if 'keyword' in rec_type else 'ad' if 'ad' in rec_type else 'budget'
 
-        # Determine target display based on type
+        # Determine target display based on type. Fall back through the fields a given rec type
+        # actually carries so ad-copy / pmax / campaign-level recs don't render "N/A".
         if rec_type == 'schedule_bid_adjustment':
             target_display = rec.get('time_slot', 'N/A')
         elif rec_type in ['geo_exclusion', 'geo_bid_adjustment']:
             target_display = rec.get('location', 'N/A')
+        elif 'ad_copy' in rec_type or 'ad' == type_class:
+            target_display = (rec.get('ad_group_name') or rec.get('campaign_name')
+                              or rec.get('headline') or rec.get('title') or 'N/A')
         else:
-            target_display = rec.get('keyword', rec.get('target', 'N/A'))
+            target_display = (rec.get('keyword') or rec.get('target') or rec.get('ad_group_name')
+                              or rec.get('campaign_name') or rec.get('title') or 'N/A')
 
         # Get automation and impact metadata
         automation = rec.get('automation', {})
@@ -936,26 +966,8 @@ def create_html_dashboard(metrics, insights, recommendations, output_file):
 """
 
     html += f"""
-        <h2>📁 Data Files</h2>
-        <p>All analysis data has been saved to:</p>
-        <ul>
-            <li><strong>Metrics:</strong> .tmp/google_ads_metrics_{metrics.get('customer_id', '')}_*.json</li>
-            <li><strong>Insights:</strong> .tmp/insights_{metrics.get('customer_id', '')}.json</li>
-            <li><strong>Recommendations:</strong> .tmp/recommendations_{metrics.get('customer_id', '')}.json</li>
-        </ul>
-
-        <div class="note">
-            <strong>Next Steps:</strong>
-            <ol style="margin-left: 20px; margin-top: 10px;">
-                <li>Review all recommendations carefully</li>
-                <li>Decide which changes to implement</li>
-                <li>Tell Claude "apply these recommendations: [list numbers]" to execute</li>
-                <li>Monitor performance after changes are applied</li>
-            </ol>
-        </div>
-
         <div style="text-align: center; margin-top: 40px; padding-top: 20px; border-top: 2px solid #e0e0e0; color: #5f6368;">
-            <p>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} by Claude Code Agentic Workflow</p>
+            <p>Generated on {datetime.now().strftime('%Y-%m-%d')}</p>
         </div>
     </div>
 
@@ -987,6 +999,7 @@ def main():
     parser.add_argument("--insights_file", required=True, help="Path to insights JSON file")
     parser.add_argument("--recommendations_file", required=True, help="Path to recommendations JSON file")
     parser.add_argument("--output_file", default=None, help="Output HTML file path")
+    parser.add_argument("--client_name", default="", help="Client name for brand color")
 
     args = parser.parse_args()
 
@@ -1008,7 +1021,7 @@ def main():
         args.output_file = f".tmp/google_ads_dashboard_{customer_id}_{timestamp}.html"
 
     print(f"Creating HTML dashboard: {args.output_file}")
-    output_path = create_html_dashboard(metrics, insights, recommendations, args.output_file)
+    output_path = create_html_dashboard(metrics, insights, recommendations, args.output_file, client_name=args.client_name)
 
     print()
     print("="*70)

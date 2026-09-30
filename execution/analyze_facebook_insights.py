@@ -314,6 +314,11 @@ def analyze_landing_page_performance(ads):
     if not ads:
         return {'heatmap': [], 'issues': []}
 
+    # Ads with no destination URL (boosted posts / engagement objectives) genuinely have no
+    # landing page — bucket them under a clear label and never raise a "fix the landing page"
+    # issue for them (you can't optimize a page that doesn't exist).
+    NO_URL = 'No destination URL (post/engagement)'
+
     # Group by landing page URL
     page_metrics = defaultdict(lambda: {
         'impressions': 0, 'clicks': 0, 'spend': 0,
@@ -323,7 +328,7 @@ def analyze_landing_page_performance(ads):
     for ad in ads:
         url = ad.get('link_url', '').strip()
         if not url:
-            url = '(no URL)'
+            url = NO_URL
 
         # Normalize URL (remove tracking params)
         base_url = url.split('?')[0].rstrip('/')
@@ -357,7 +362,7 @@ def analyze_landing_page_performance(ads):
         }
         heatmap.append(entry)
 
-        if clicks > 50 and conv_rate < 2:
+        if url != NO_URL and clicks > 50 and conv_rate < 2:
             issues.append({
                 'url': url,
                 'issue': f'Low conversion rate ({conv_rate:.1f}%) with {clicks} clicks',

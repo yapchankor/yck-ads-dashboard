@@ -21,15 +21,22 @@ import glob
 import os
 from datetime import datetime
 from calculate_total_impact import aggregate_total_benefits
+from utils import currency_symbol as get_currency_symbol, brand_primary, hex_to_rgba
 
 
-def create_facebook_html_dashboard(metrics, insights, recommendations, output_file):
+def create_facebook_html_dashboard(metrics, insights, recommendations, output_file, client_name=None):
     """Generate a standalone HTML dashboard for Facebook Ads."""
 
     summary = metrics.get('summary', {})
     date_range = metrics.get('date_range', {})
-    currency = metrics.get('currency', 'MYR')
-    cs = 'RM' if currency == 'MYR' else '$' if currency == 'USD' else currency
+    # Currency from the account itself (matches create_html_dashboard). Templates below use
+    # "{cs} {value}", so strip the helper's trailing space to keep MYR byte-identical ("RM 27.08")
+    # while GBP renders as "£ 27.08" instead of the old "GBP 27.08".
+    cs = get_currency_symbol(metrics.get('currency_code') or metrics.get('currency') or 'MYR').strip()
+    # Brand chrome color per client (header, section titles, borders). The .bg-blue metric tile
+    # keeps its own gradient — only chrome is rebranded.
+    primary = brand_primary(client_name)
+    primary_tint = hex_to_rgba(primary, 0.08)
     account_name = metrics.get('account_name', 'Facebook Ads')
 
     html = f"""
@@ -58,11 +65,11 @@ def create_facebook_html_dashboard(metrics, insights, recommendations, output_fi
         .header {{
             text-align: center;
             padding: 20px 0 30px;
-            border-bottom: 3px solid #1877F2;
+            border-bottom: 3px solid {primary};
             margin-bottom: 30px;
         }}
         .header h1 {{
-            color: #1877F2;
+            color: {primary};
             font-size: 28px;
             margin-bottom: 5px;
         }}
@@ -77,7 +84,7 @@ def create_facebook_html_dashboard(metrics, insights, recommendations, output_fi
         }}
         .platform-badge {{
             display: inline-block;
-            background: #1877F2;
+            background: {primary};
             color: white;
             padding: 4px 12px;
             border-radius: 4px;
@@ -113,7 +120,7 @@ def create_facebook_html_dashboard(metrics, insights, recommendations, output_fi
         /* Sections */
         .section {{ margin-bottom: 30px; }}
         .section h2 {{
-            color: #1877F2;
+            color: {primary};
             font-size: 20px;
             margin-bottom: 5px;
             padding-bottom: 10px;
@@ -127,8 +134,8 @@ def create_facebook_html_dashboard(metrics, insights, recommendations, output_fi
 
         /* AI Summary */
         .ai-summary {{
-            background: #f0f7ff;
-            border-left: 4px solid #1877F2;
+            background: {primary_tint};
+            border-left: 4px solid {primary};
             padding: 20px;
             border-radius: 0 8px 8px 0;
             margin-bottom: 30px;
@@ -283,7 +290,7 @@ def create_facebook_html_dashboard(metrics, insights, recommendations, output_fi
         /* Formula display */
         .formula-explain {{
             background: #f8f9fa;
-            border-left: 3px solid #1877F2;
+            border-left: 3px solid {primary};
             padding: 8px;
             margin-top: 8px;
             font-size: 12px;
@@ -324,6 +331,26 @@ def create_facebook_html_dashboard(metrics, insights, recommendations, output_fi
             body {{ padding: 0; background: white; }}
             .container {{ box-shadow: none; }}
             .no-print {{ display: none; }}
+            @page {{ size: A4; margin: 12mm 10mm; }}
+            /* Never split a card, recommendation, or table row across pages. */
+            .metric-card, .rec-card, .ai-summary, tr {{
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }}
+            .section h2, h1, h3 {{ page-break-after: avoid; }}
+            /* Repeat table headers on every page a table spans. */
+            thead {{ display: table-header-group; }}
+            /* Fit wide tables within the A4 page: constrain layout, shrink type, wrap long
+               campaign/ad-set names so nothing runs off the right edge. */
+            .container {{ padding: 12px !important; }}
+            .table-wrapper {{ overflow: visible !important; }}
+            table {{ width: 100% !important; table-layout: fixed; }}
+            th, td {{
+                font-size: 9px !important;
+                padding: 4px 3px !important;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }}
         }}
     </style>
 </head>
@@ -896,7 +923,7 @@ def create_facebook_html_dashboard(metrics, insights, recommendations, output_fi
     <div class="footer">
         <p>Generated on {datetime.now().strftime('%B %d, %Y at %H:%M')} | Facebook Ads Insights Dashboard</p>
         <p style="margin-top:5px;">
-            <button class="no-print" onclick="window.print()" style="padding:8px 20px;background:#1877F2;color:white;border:none;border-radius:5px;cursor:pointer;font-size:13px;">
+            <button class="no-print" onclick="window.print()" style="padding:8px 20px;background:{primary};color:white;border:none;border-radius:5px;cursor:pointer;font-size:13px;">
                 Print / Save PDF
             </button>
         </p>
@@ -922,6 +949,7 @@ def main():
     parser.add_argument('--recommendations_file', help='Path to recommendations JSON')
     parser.add_argument('--ad_account_id', help='Auto-detect files for this account')
     parser.add_argument('--output_dir', default='.tmp', help='Output directory')
+    parser.add_argument('--client_name', default='', help='Client name for brand color')
 
     args = parser.parse_args()
 
@@ -974,7 +1002,7 @@ def main():
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     output_file = os.path.join(args.output_dir, f'facebook_ads_dashboard_{ad_account_id}_{timestamp}.html')
 
-    create_facebook_html_dashboard(metrics, insights, recommendations, output_file)
+    create_facebook_html_dashboard(metrics, insights, recommendations, output_file, client_name=args.client_name)
 
     print(f"\nOpen in browser: {os.path.abspath(output_file)}")
 

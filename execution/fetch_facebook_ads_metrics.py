@@ -113,6 +113,33 @@ def parse_action_values(action_values_list):
     return total
 
 
+def parse_action_sum(action_list):
+    """Sum all values in a Meta action-style list (e.g. video watch actions)."""
+    if not action_list:
+        return 0
+    total = 0.0
+    for item in action_list:
+        try:
+            total += float(item.get('value', 0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def parse_action_type(action_list, action_type):
+    """Return the summed value for a specific action_type in an actions list."""
+    if not action_list:
+        return 0
+    total = 0.0
+    for item in action_list:
+        if item.get('action_type') == action_type:
+            try:
+                total += float(item.get('value', 0))
+            except (TypeError, ValueError):
+                continue
+    return total
+
+
 def fetch_campaign_metrics(account, start_date, end_date):
     """Fetch campaign-level performance metrics."""
     print("  Fetching campaign metrics...")
@@ -478,12 +505,22 @@ def fetch_ad_metrics(account, start_date, end_date):
         'impressions', 'reach', 'frequency',
         'clicks', 'ctr', 'cpc', 'cpm', 'spend',
         'actions', 'cost_per_action_type',
+        # Ad-relevance diagnostics (Above/Average/Below Average)
+        'quality_ranking', 'engagement_rate_ranking', 'conversion_rate_ranking',
+        # Video engagement / retention
+        'video_thruplay_watched_actions',
+        'video_p25_watched_actions', 'video_p50_watched_actions',
+        'video_p75_watched_actions', 'video_p100_watched_actions',
+        'video_avg_time_watched_actions',
+        # Click funnel
+        'outbound_clicks', 'inline_link_clicks',
     ]
 
     params = {
         'time_range': {'since': start_date, 'until': end_date},
         'level': 'ad',
         'limit': 500,
+        'action_attribution_windows': ['7d_click', '1d_view'],
     }
 
     insights = account.get_insights(fields=fields, params=params)
@@ -569,6 +606,23 @@ def fetch_ad_metrics(account, start_date, end_date):
             'spend': spend,
             'conversions': conversions,
             'cost_per_conversion': spend / conversions if conversions > 0 else 0,
+            # Ad-relevance diagnostics (string labels, e.g. ABOVE_AVERAGE)
+            'quality_ranking': row.get('quality_ranking'),
+            'engagement_rate_ranking': row.get('engagement_rate_ranking'),
+            'conversion_rate_ranking': row.get('conversion_rate_ranking'),
+            # Video retention funnel
+            # 3-second plays come from the actions array (action_type video_view); ThruPlay is the ~15s metric.
+            'video_3s': int(parse_action_type(row.get('actions'), 'video_view')),
+            'video_thruplays': parse_action_sum(row.get('video_thruplay_watched_actions')),
+            'video_p25': parse_action_sum(row.get('video_p25_watched_actions')),
+            'video_p50': parse_action_sum(row.get('video_p50_watched_actions')),
+            'video_p75': parse_action_sum(row.get('video_p75_watched_actions')),
+            'video_p100': parse_action_sum(row.get('video_p100_watched_actions')),
+            'video_avg_time_watched': parse_action_sum(row.get('video_avg_time_watched_actions')),
+            # Click funnel
+            'outbound_clicks': int(parse_action_sum(row.get('outbound_clicks'))),
+            'inline_link_clicks': int(row.get('inline_link_clicks', 0) or 0),
+            'landing_page_views': int(parse_action_type(row.get('actions'), 'landing_page_view')),
         })
 
     print(f"    Found {len(ads)} ads")

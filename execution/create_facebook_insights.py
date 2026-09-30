@@ -41,14 +41,17 @@ from impact_models import (
     calculate_creative_refresh_impact,
     calculate_schedule_impact,
     get_automation_metadata,
+    real_customer_value,
 )
+from utils import currency_symbol
 
 
 def generate_insights_summary(metrics, audience_analysis, creative_analysis,
                                placement_analysis, budget_analysis):
     """Generate a high-level AI insights summary (narrative text)."""
     summary = metrics.get('summary', {})
-    currency = metrics.get('currency', 'MYR')
+    cur_sym = currency_symbol(metrics.get('currency_code') or metrics.get('currency') or 'MYR')
+    currency = cur_sym.strip()  # text below is "{currency} {value}", so drop the helper's trailing space
     total_spend = summary.get('total_spend', 0)
     total_conversions = summary.get('total_conversions', 0)
     cpa = summary.get('overall_cpa', 0)
@@ -115,7 +118,28 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                               landing_page_analysis=None, date_days=30):
     """Generate actionable recommendations from all analyses."""
     recommendations = []
-    currency = metrics.get('currency', 'MYR')
+    cur_sym = currency_symbol(metrics.get('currency_code') or metrics.get('currency') or 'MYR')
+    currency = cur_sym.strip()  # text uses "{currency} {value}"; impact calls get cur_sym (with trailing space for MYR)
+
+    # Real conversion value is only trustworthy when the client's tracked value
+    # represents actual revenue (per-client flag, default off → 3× CPA proxy, numbers
+    # unchanged). See create_full_insights for the rationale.
+    _summary = metrics.get('summary', {})
+    use_tracked_value = bool(_summary.get('tracked_value_is_revenue', False))
+    account_cv = real_customer_value(
+        _summary.get('total_conversion_value', 0), _summary.get('total_conversions', 0)
+    ) if use_tracked_value else None
+
+    def _cv(conv_value, conversions, value_per_conversion=None):
+        """Per-entity real value, else account average, else None (→ 3× CPA proxy)."""
+        if not use_tracked_value:
+            return None
+        return real_customer_value(conv_value, conversions, value_per_conversion) or account_cv
+
+    # Account average CPA, derived from the account (not hardcoded); used by the
+    # schedule model and as the value proxy for ROAS scaling.
+    _acct_conv = _summary.get('total_conversions', 0) or 0
+    account_avg_cpa = (_summary.get('total_spend', 0) / _acct_conv) if _acct_conv else None
 
     # Find the top-performing ad set (by conversions) to apply exclusions to
     ad_sets = metrics.get('ad_sets', [])
@@ -145,7 +169,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
     # 1. Audience exclusion recommendations
     for seg in audience_analysis.get('wasted_segments', [])[:3]:
         # Calculate impact
-        impact_data = calculate_exclusion_impact(seg['spend'], conversions=0, date_days=date_days)
+        impact_data = calculate_exclusion_impact(seg['spend'], conversions=0, date_days=date_days, currency_symbol=cur_sym)
         automation = get_automation_metadata('audience_exclusion', platform='facebook')
 
         rec = {
@@ -171,9 +195,12 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
         impact_data = calculate_creative_refresh_impact(
             spend=ad.get('spend', 0),
             frequency=ad.get('frequency', 1),
-            current_ctr=ad.get('ctr', 0) / 100.0,
             current_conversions=ad.get('conversions', 0),
-            date_days=date_days
+            customer_value=_cv(
+                ad.get('conversion_value', 0), ad.get('conversions', 0)
+            ),
+            date_days=date_days,
+            currency_symbol=cur_sym
         )
         automation = get_automation_metadata('creative_refresh', platform='facebook')
 
@@ -198,7 +225,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
     for pl in placement_analysis.get('placements', []):
         if pl.get('efficiency') == 'poor' and pl['spend'] > 10:
             # Calculate impact
-            impact_data = calculate_exclusion_impact(pl['spend'], conversions=0, date_days=date_days)
+            impact_data = calculate_exclusion_impact(pl['spend'], conversions=0, date_days=date_days, currency_symbol=cur_sym)
             automation = get_automation_metadata('placement_exclusion', platform='facebook')
 
             rec = {
@@ -252,7 +279,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
     # 5. Geographic recommendations
     for loc in geo_analysis.get('poor_locations', [])[:2]:
         # Calculate impact
-        impact_data = calculate_exclusion_impact(loc['spend'], conversions=0, date_days=date_days)
+        impact_data = calculate_exclusion_impact(loc['spend'], conversions=0, date_days=date_days, currency_symbol=cur_sym)
         automation = get_automation_metadata('geo_exclusion', platform='facebook')
 
         rec = {
@@ -288,7 +315,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
             peak_hours = [h for h in peak_hours if h is not None]
 
             # Calculate impact
-            impact_data = calculate_schedule_impact(wasted_hours_spend=wasted_in_worst, date_days=date_days)
+            impact_data = calculate_schedule_impact(wasted_hours_spend=wasted_in_worst, avg_cpa=account_avg_cpa, customer_value=account_cv, date_days=date_days, currency_symbol=cur_sym)
             automation = get_automation_metadata('schedule_adjustment', platform='facebook')
 
             rec = {
@@ -315,7 +342,11 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 current_spend=candidate.get('spend', 0),
                 current_conversions=candidate.get('conversions', 0),
                 scale_factor=1.25,
+                customer_value=_cv(
+                    candidate.get('conversion_value', 0), candidate.get('conversions', 0)
+                ),
                 date_days=date_days,
+                currency_symbol=cur_sym,
             )
             automation = get_automation_metadata('budget_scaling', platform='facebook')
             current_budget = candidate.get('current_budget') or candidate.get('daily_budget') or candidate.get('lifetime_budget') or 0
@@ -344,7 +375,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
 
         for candidate in top_perf_analysis.get('review_candidates', [])[:2]:
             # Calculate impact (savings from pausing)
-            impact_data = calculate_exclusion_impact(candidate.get('spend', 0), conversions=0, date_days=date_days)
+            impact_data = calculate_exclusion_impact(candidate.get('spend', 0), conversions=0, date_days=date_days, currency_symbol=cur_sym)
             automation = get_automation_metadata('campaign_review', platform='facebook')
 
             rec = {
@@ -395,7 +426,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
             total_wasted = dow_analysis.get('total_wasted_on_days', 0)
 
             # Calculate impact
-            impact_data = calculate_schedule_impact(wasted_hours_spend=total_wasted, date_days=date_days)
+            impact_data = calculate_schedule_impact(wasted_hours_spend=total_wasted, avg_cpa=account_avg_cpa, customer_value=account_cv, date_days=date_days, currency_symbol=cur_sym)
             automation = get_automation_metadata('day_schedule', platform='facebook')
 
             rec = {
@@ -444,14 +475,16 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
     # 11. ROAS OPTIMIZATION
     if roas_analysis:
         for opp in roas_analysis.get('scale_opportunities', [])[:2]:
-            # Calculate impact - for high ROAS, scaling is beneficial
-            conversions = opp.get('conversion_value', 0) / 200  # Estimate conversions
+            # Value/conversion: tracked value if trusted, else the account's 3× CPA proxy.
+            roas_cv = account_cv or (account_avg_cpa * 3 if account_avg_cpa else 0)
+            conversions = (opp.get('conversion_value', 0) / roas_cv) if roas_cv else 0
             impact_data = calculate_scaling_impact(
                 current_spend=opp.get('spend', 0),
                 current_conversions=conversions,
                 scale_factor=1.30,
-                customer_value=200,
-                date_days=date_days
+                customer_value=roas_cv if roas_cv else None,
+                date_days=date_days,
+                currency_symbol=cur_sym
             )
             automation = get_automation_metadata('roas_scaling', platform='facebook')
 
@@ -479,7 +512,7 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 'additional_conversions_monthly': 0,
                 'confidence': 'high',
                 'confidence_pct': 85,
-                'formula': f"Weekly loss (RM {opp.get('loss', 0):.2f}) × 4 weeks = RM {loss_monthly:.2f} saved",
+                'formula': f"Weekly loss ({cur_sym}{opp.get('loss', 0):.2f}) × 4 weeks = {cur_sym}{loss_monthly:.2f} saved",
                 'assumptions': ['Negative ROAS indicates losing money', 'Reducing budget stops the loss']
             }
 
@@ -527,7 +560,11 @@ def generate_recommendations(metrics, audience_analysis, creative_analysis,
                 current_spend=loc.get('spend', 0),
                 current_conversions=loc.get('conversions', 0),
                 scale_factor=1.20,
+                customer_value=_cv(
+                    loc.get('conversion_value', 0), loc.get('conversions', 0)
+                ),
                 date_days=date_days,
+                currency_symbol=cur_sym,
             )
             automation = get_automation_metadata('geo_scaling', platform='facebook')
 
