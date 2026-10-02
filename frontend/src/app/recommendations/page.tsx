@@ -3,8 +3,10 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { RecommendationCard } from "@/components/ui/RecommendationCard";
 import { currencySymbol } from "@/lib/client-config";
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { DashboardMetrics, Recommendation } from "@/lib/types";
+import { computePlatformImpact, type PlatformImpact } from "@/lib/recommendation-impact";
 
 type TrackedRecommendation = {
   recommendation_id?: string;
@@ -73,68 +75,6 @@ function removeTrackedRecommendations(recommendations: Recommendation[], tracked
   ));
 }
 
-// ── Impact aggregation ──────────────────────────────────────────────────────
-// Uses structured impact_data fields written by the backend (same source as HTML reports).
-// Each rec discounts its own numbers by its own confidence_pct; recs without one fall
-// back to CONFIDENCE_FACTOR (0.7). Matches aggregate_total_benefits in calculate_total_impact.py.
-
-const CONFIDENCE_FACTOR = 0.7;
-
-type PlatformImpact = {
-  monthlySavings: number;
-  additionalConversions: number;
-  additionalRevenue: number;
-  netMonthlyBenefit: number;
-  autoCount: number;
-  manualCount: number;
-  avgConfidencePct: number;
-};
-
-function computePlatformImpact(recs: Recommendation[]): PlatformImpact {
-  let monthlySavings = 0;
-  let additionalConversions = 0;
-  let additionalRevenue = 0;
-  let netMonthlyBenefit = 0;
-  let autoCount = 0;
-  let manualCount = 0;
-  let confidenceSum = 0;
-  let confidenceCount = 0;
-
-  for (const rec of recs) {
-    const d = rec.impact_data || {};
-    // Discount by this rec's own confidence; default to the moderate 0.7 when absent.
-    const factor = typeof d.confidence_pct === "number" ? d.confidence_pct / 100 : CONFIDENCE_FACTOR;
-    const savings = (d.monthly_savings || 0) * factor;
-    const convs = (d.additional_conversions_monthly || 0) * factor;
-    const revenue = (d.additional_revenue_monthly || 0) * factor;
-    const spend = (d.additional_spend_monthly || 0) * factor;
-    const rawNet = d.net_benefit_monthly || 0;
-    const net = rawNet !== 0
-      ? rawNet * factor
-      : (savings + revenue - spend);
-
-    monthlySavings += savings;
-    additionalConversions += convs;
-    additionalRevenue += revenue;
-    netMonthlyBenefit += net;
-    confidenceSum += factor * 100;
-    confidenceCount++;
-
-    if (rec.automation_allowed) autoCount++;
-    else manualCount++;
-  }
-
-  return {
-    monthlySavings: Math.round(monthlySavings),
-    additionalConversions: Math.round(additionalConversions * 10) / 10,
-    additionalRevenue: Math.round(additionalRevenue),
-    netMonthlyBenefit: Math.round(netMonthlyBenefit),
-    autoCount,
-    manualCount,
-    avgConfidencePct: confidenceCount ? Math.round(confidenceSum / confidenceCount) : 0,
-  };
-}
-
 function fmtEnum(value: unknown) {
   return String(value || "-")
     .replace(/_/g, " ")
@@ -186,7 +126,7 @@ function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCoun
   ].filter(Boolean) as { label: string; value: string; sub: string }[];
 
   return (
-    <div className="bg-gradient-to-br from-indigo-600 to-purple-700 text-white rounded-2xl p-5 mb-5">
+    <div className="bg-linear-to-br from-indigo-600 to-purple-700 text-white rounded-2xl p-5 mb-5">
       <div className="flex items-start justify-between flex-wrap gap-2 border-b border-white/20 pb-3 mb-4">
         <div>
           <h3 className="text-sm font-bold text-white">Total Expected Impact</h3>
@@ -211,15 +151,34 @@ function TotalImpactCard({ impact, recCount }: { impact: PlatformImpact; recCoun
   );
 }
 
-// ── Main page ───────────────────────────────────────────────────────────────
+type PlatformFilter = "All" | "Google" | "Meta" | "Cross-Platform";
 
-export default function RecommendationsPage() {
+function RecommendationsContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  const platformParam = searchParams.get("platform");
+  const selectedPlatform: PlatformFilter =
+    platformParam?.toLowerCase() === "google"
+      ? "Google"
+      : platformParam?.toLowerCase() === "meta"
+      ? "Meta"
+      : platformParam?.toLowerCase() === "cross-platform" || platformParam?.toLowerCase() === "crossplatform"
+      ? "Cross-Platform"
+      : "All";
+
   const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null);
   const [googleNativeRecs, setGoogleNativeRecs] = useState<{ type: string; count: number; est_conversions?: number; est_cost_change?: number }[]>([]);
   const [clientName, setClientName] = useState<string | undefined>();
   const [baselineMetrics, setBaselineMetrics] = useState<DashboardMetrics | undefined>();
+  const [fetchedAt, setFetchedAt] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  function handlePlatformChange(p: PlatformFilter) {
+    const url = p === "All" ? "/recommendations" : `/recommendations?platform=${p}`;
+    router.replace(url, { scroll: false });
+  }
 
   useEffect(() => {
     async function fetchData() {
@@ -235,6 +194,7 @@ export default function RecommendationsPage() {
         setGoogleNativeRecs(Array.isArray(data.google_recommendations) ? data.google_recommendations : []);
         setClientName(data.client_name);
         setBaselineMetrics(data.metrics);
+        setFetchedAt(data.fetched_at);
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
       } finally {
@@ -265,6 +225,11 @@ export default function RecommendationsPage() {
   const metaImpact = computePlatformImpact(metaRecs);
   const crossPlatformImpact = computePlatformImpact(crossPlatformRecs);
 
+  const showCrossPlatform = (selectedPlatform === "All" || selectedPlatform === "Cross-Platform") && crossPlatformRecs.length > 0;
+  const showGoogleNative = (selectedPlatform === "All" || selectedPlatform === "Google") && googleNativeRecs.length > 0;
+  const showGoogle = selectedPlatform === "All" || selectedPlatform === "Google";
+  const showMeta = selectedPlatform === "All" || selectedPlatform === "Meta";
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-8 pb-10">
@@ -278,6 +243,43 @@ export default function RecommendationsPage() {
               <span className="ml-2 text-foreground font-semibold">{allRecs.length} total recommendations</span>
             )}
           </p>
+          {fetchedAt && (
+            <p className="text-[11px] font-medium text-text-muted mt-1 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+              Data updated {new Date(fetchedAt).toLocaleDateString([], { month: "short", day: "numeric" })} at {new Date(fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </p>
+          )}
+        </div>
+
+        {/* Platform Filter Tabs */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          {(["All", "Google", "Meta", "Cross-Platform"] as PlatformFilter[]).map((p) => {
+            const count =
+              p === "All" ? allRecs.length :
+              p === "Google" ? googleRecs.length :
+              p === "Meta" ? metaRecs.length :
+              crossPlatformRecs.length;
+
+            const isActive = selectedPlatform === p;
+            return (
+              <button
+                key={p}
+                onClick={() => handlePlatformChange(p)}
+                className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                  isActive
+                    ? "bg-foreground text-background shadow-sm"
+                    : "bg-surface border border-border/60 text-text-muted hover:text-foreground hover:bg-surface-hover"
+                }`}
+              >
+                <span>{p}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                  isActive ? "bg-background/20 text-inherit" : "bg-surface-hover text-text-muted"
+                }`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {error ? (
@@ -286,7 +288,7 @@ export default function RecommendationsPage() {
           </div>
         ) : (
           <>
-            {crossPlatformRecs.length > 0 && (
+            {showCrossPlatform && (
               <section className="flex flex-col gap-0">
                 <div className="flex items-center gap-2.5 mb-4">
                   <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-teal-50 border border-teal-100">
@@ -313,8 +315,15 @@ export default function RecommendationsPage() {
                 </div>
               </section>
             )}
+
+            {selectedPlatform === "Cross-Platform" && crossPlatformRecs.length === 0 && (
+              <div className="py-12 text-center border-2 border-dashed border-border rounded-2xl">
+                <p className="text-text-muted font-medium text-sm">No Cross-Platform recommendations right now.</p>
+              </div>
+            )}
+
             {/* ── From Google Ads (native) ── */}
-            {googleNativeRecs.length > 0 && (
+            {showGoogleNative && (
               <section className="flex flex-col gap-0">
                 <div className="flex items-center gap-2.5 mb-4">
                   <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
@@ -363,74 +372,78 @@ export default function RecommendationsPage() {
             )}
 
             {/* ── Google Ads Section ── */}
-            <section className="flex flex-col gap-0">
-              <div className="flex items-center gap-2.5 mb-4">
-                <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
-                  <GoogleIcon />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-foreground leading-tight">Google Ads</h2>
-                  <p className="text-xs text-text-muted">
-                    {googleRecs.length} recommendation{googleRecs.length !== 1 ? "s" : ""}
-                  </p>
-                </div>
-              </div>
-
-              {googleRecs.length > 0 ? (
-                <>
-                  <TotalImpactCard impact={googleImpact} recCount={googleRecs.length} />
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {googleRecs.map((rec) => (
-                      <RecommendationCard
-                        key={rec.id}
-                        recommendation={rec}
-                        clientName={clientName}
-                        baselineMetrics={baselineMetrics}
-                      />
-                    ))}
+            {showGoogle && (
+              <section className="flex flex-col gap-0">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
+                    <GoogleIcon />
                   </div>
-                </>
-              ) : (
-                <div className="py-12 text-center border-2 border-dashed border-border rounded-2xl">
-                  <p className="text-text-muted font-medium text-sm">No Google Ads recommendations right now.</p>
+                  <div>
+                    <h2 className="text-lg font-bold text-foreground leading-tight">Google Ads</h2>
+                    <p className="text-xs text-text-muted">
+                      {googleRecs.length} recommendation{googleRecs.length !== 1 ? "s" : ""}
+                    </p>
+                  </div>
                 </div>
-              )}
-            </section>
+
+                {googleRecs.length > 0 ? (
+                  <>
+                    <TotalImpactCard impact={googleImpact} recCount={googleRecs.length} />
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                      {googleRecs.map((rec) => (
+                        <RecommendationCard
+                          key={rec.id}
+                          recommendation={rec}
+                          clientName={clientName}
+                          baselineMetrics={baselineMetrics}
+                        />
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="py-12 text-center border-2 border-dashed border-border rounded-2xl">
+                    <p className="text-text-muted font-medium text-sm">No Google Ads recommendations right now.</p>
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* ── Meta Ads Section ── */}
-            <section className="flex flex-col gap-0">
-              <div className="flex items-center gap-2.5 mb-4">
-                <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
-                  <MetaIcon />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-foreground leading-tight">Meta Ads</h2>
-                  <p className="text-xs text-text-muted">
-                    {metaRecs.length} recommendation{metaRecs.length !== 1 ? "s" : ""}
-                  </p>
-                </div>
-              </div>
-
-              {metaRecs.length > 0 ? (
-                <>
-                  <TotalImpactCard impact={metaImpact} recCount={metaRecs.length} />
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {metaRecs.map((rec) => (
-                      <RecommendationCard
-                        key={rec.id}
-                        recommendation={rec}
-                        clientName={clientName}
-                        baselineMetrics={baselineMetrics}
-                      />
-                    ))}
+            {showMeta && (
+              <section className="flex flex-col gap-0">
+                <div className="flex items-center gap-2.5 mb-4">
+                  <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
+                    <MetaIcon />
                   </div>
-                </>
-              ) : (
-                <div className="py-12 text-center border-2 border-dashed border-border rounded-2xl">
-                  <p className="text-text-muted font-medium text-sm">No Meta Ads recommendations right now.</p>
+                  <div>
+                    <h2 className="text-lg font-bold text-foreground leading-tight">Meta Ads</h2>
+                    <p className="text-xs text-text-muted">
+                      {metaRecs.length} recommendation{metaRecs.length !== 1 ? "s" : ""}
+                    </p>
+                  </div>
                 </div>
-              )}
-            </section>
+
+                {metaRecs.length > 0 ? (
+                  <>
+                    <TotalImpactCard impact={metaImpact} recCount={metaRecs.length} />
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                      {metaRecs.map((rec) => (
+                        <RecommendationCard
+                          key={rec.id}
+                          recommendation={rec}
+                          clientName={clientName}
+                          baselineMetrics={baselineMetrics}
+                        />
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="py-12 text-center border-2 border-dashed border-border rounded-2xl">
+                    <p className="text-text-muted font-medium text-sm">No Meta Ads recommendations right now.</p>
+                  </div>
+                )}
+              </section>
+            )}
 
             {allRecs.length === 0 && (
               <div className="py-20 text-center border-2 border-dashed border-border rounded-3xl">
@@ -441,5 +454,24 @@ export default function RecommendationsPage() {
         )}
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function RecommendationsPage() {
+  return (
+    <Suspense
+      fallback={
+        <DashboardLayout>
+          <div className="flex h-[60vh] items-center justify-center">
+            <div className="flex flex-col items-center gap-4">
+              <div className="h-10 w-10 animate-spin rounded-full border-4 border-accent-lime border-t-accent-primary"></div>
+              <p className="text-sm font-medium text-text-muted">Loading recommendations...</p>
+            </div>
+          </div>
+        </DashboardLayout>
+      }
+    >
+      <RecommendationsContent />
+    </Suspense>
   );
 }

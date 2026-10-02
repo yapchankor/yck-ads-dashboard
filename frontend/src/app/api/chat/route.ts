@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthSession } from "@/lib/auth-helper";
 import { NextResponse } from "next/server";
 import { normalizeN8nChatResponse, parseChatRequest } from "@/lib/chat-contract";
 import { CHAT_UPSTREAM_TIMEOUT_MS } from "@/lib/chat-timeout";
@@ -31,7 +31,7 @@ function opaqueSessionId(clientName: string, userId: string) {
 }
 
 export async function POST(request: Request) {
-  const { userId } = await auth();
+  const { userId } = await getAuthSession();
   if (!userId) return new NextResponse("Unauthorized", { status: 401 });
 
   const endpoint = getCopilotEndpoint();

@@ -3,11 +3,12 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ActionDrawer } from "@/components/ui/ActionDrawer";
 import { DatePicker } from "@/components/ui/DatePicker";
-import { DateRangeSelection } from "@/lib/date-range";
+import { DateRangeSelection, getPresetRange } from "@/lib/date-range";
 import { fetchDashboardData } from "@/lib/dashboard-refresh";
 import { ActionPreview } from "@/lib/types";
 import { RecommendationsPointer } from "@/components/ui/RecommendationsPointer";
 import { formatCurrency, formatNumber } from "@/lib/client-config";
+import { Clock, Layers } from "lucide-react";
 import { PolarAngleAxis, RadialBar, RadialBarChart } from "recharts";
 import React, { useEffect, useState } from "react";
 
@@ -23,7 +24,7 @@ function fmtPct(n: number) {
 }
 function asPct(n: number) {
   if (!Number.isFinite(n)) return 0;
-  return n > 1 ? n : n * 100;
+  return n;
 }
 function fmtMaybeMYR(value: unknown) {
   const parsed = Number(value);
@@ -31,7 +32,7 @@ function fmtMaybeMYR(value: unknown) {
 }
 function fmtMaybePct(value: unknown) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? fmtPct(asPct(parsed)) : <span className="text-text-muted">-</span>;
+  return Number.isFinite(parsed) && parsed > 0 ? fmtPct(parsed) : <span className="text-text-muted">-</span>;
 }
 function fmtEnum(value: unknown) {
   return String(value || "-")
@@ -275,8 +276,20 @@ function RowActionButton({
   );
 }
 
+type GoogleTab = "summary" | "campaigns" | "keywords" | "creative" | "targeting" | "all";
+
+const GOOGLE_TABS: { id: GoogleTab; label: string }[] = [
+  { id: "summary", label: "Overview & Pacing" },
+  { id: "campaigns", label: "Campaigns & PMax" },
+  { id: "keywords", label: "Keywords & Queries" },
+  { id: "creative", label: "Creative & Quality" },
+  { id: "targeting", label: "Geo, Device & Time" },
+  { id: "all", label: "All Modules (28)" },
+];
+
 // ─── page ────────────────────────────────────────────────────────────────────
 export default function GoogleAdsPage() {
+  const [activeTab, setActiveTab] = useState<GoogleTab>("summary");
   const [d, setD] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshingRange, setRefreshingRange] = useState(false);
@@ -601,6 +614,8 @@ export default function GoogleAdsPage() {
   const filteredSearchQueries = filterAndSortRows(searchQueries, queryFilter.preset, queryFilter.search, "query", false);
   const filteredAdGroups = filterAndSortRows(adGroups, adGroupFilter.preset, adGroupFilter.search, "ad_group_name");
 
+  const isTab = (tab: GoogleTab) => activeTab === tab || activeTab === "all";
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-6 pb-10">
@@ -613,6 +628,12 @@ export default function GoogleAdsPage() {
               Search &amp; display performance for <strong className="text-foreground">{d.account_name || d.client_name || "Selected client"}</strong>
               {d.date_range ? ` · ${d.date_range.start_date || ""} to ${d.date_range.end_date || ""}` : ""}
             </p>
+            {d.fetched_at && (
+              <p className="text-[11px] font-medium text-text-muted mt-1 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                Data updated {new Date(d.fetched_at).toLocaleDateString([], { month: "short", day: "numeric" })} at {new Date(d.fetched_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </p>
+            )}
           </div>
           <DatePicker
             currentRange={d.date_range}
@@ -663,8 +684,31 @@ export default function GoogleAdsPage() {
           </div>
         )}
 
+        {/* ── Recommendations Pointer ── */}
+        <RecommendationsPointer platform="Google" recommendations={d.recommendations} />
+
+        {/* ── Sub-Navigation Tabs ── */}
+        <div className="flex items-center gap-2 overflow-x-auto border-b border-border/60 pb-3">
+          {GOOGLE_TABS.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`whitespace-nowrap rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                  isActive
+                    ? "bg-accent-primary text-white shadow-sm"
+                    : "bg-surface border border-border/60 text-text-muted hover:bg-surface-hover hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
         {/* ── AI Insights ── */}
-        {insights.length > 0 && (
+        {isTab("summary") && insights.length > 0 && (
           <SectionCard title="AI Insights Summary">
             <div className="flex flex-col gap-3 p-4">
               {insights.map((ins: any, i: number) => <InsightCard key={i} insight={ins} />)}
@@ -672,7 +716,22 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {d.conversion_value_alert && (
+        {activeTab === "all" && keywords.length === 0 && searchQueries.length === 0 && geoGoogle.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-border/80 bg-surface/60 p-6 text-center">
+            <p className="text-xs font-semibold text-text-muted">
+              Note: Keyword and targeting breakdowns are available in the full 90-day sync view because Google Ads does not store continuous daily breakdown logs for custom sub-ranges.
+            </p>
+            <button
+              type="button"
+              onClick={() => handleRangeChange(getPresetRange(90))}
+              className="mt-2 text-xs font-bold text-accent-primary hover:underline inline-block"
+            >
+              Switch to Last 90 Days to view all modules →
+            </button>
+          </div>
+        )}
+
+        {isTab("summary") && d.conversion_value_alert && (
           <SectionCard title="Conversion Value Tracking">
             <div className="p-4">
               <div className="rounded-xl border border-red-100 bg-red-50 p-4">
@@ -683,7 +742,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {budgetPacing.days_in_period && (() => {
+        {isTab("summary") && budgetPacing.days_in_period && (() => {
           const activeBudgetTotal = googleCampaigns
             .filter((c: any) => ["active", "enabled"].includes(String(c.status || "").toLowerCase()))
             .reduce((sum: number, c: any) => sum + (Number(c.daily_budget) || 0), 0);
@@ -763,7 +822,7 @@ export default function GoogleAdsPage() {
           );
         })()}
 
-        {(searchAnalysis.total_queries || searchWasteRows.length > 0 || negativeSuggestionRows.length > 0) && (
+        {isTab("keywords") && (searchAnalysis.total_queries || searchWasteRows.length > 0 || negativeSuggestionRows.length > 0) && (
           <SectionCard title="Search Term Intelligence" description="Waste, intent gaps, and negative-keyword opportunities from actual user searches.">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
               <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
@@ -782,7 +841,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {(qualityRoadmap.total_low_qs || qsPlans.length > 0 || qsSamples.length > 0) && (
+        {isTab("creative") && (qualityRoadmap.total_low_qs || qsPlans.length > 0 || qsSamples.length > 0) && (
           <SectionCard title="Quality Score Roadmap" description="Where lower ad relevance, expected CTR, or landing-page experience is likely increasing CPC.">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
               <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
@@ -818,7 +877,7 @@ export default function GoogleAdsPage() {
         )}
 
         {/* ── Top Performers & Issues ── */}
-        {(topPerformers.length > 0 || underperformers.length > 0) && (
+        {isTab("campaigns") && (topPerformers.length > 0 || underperformers.length > 0) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {topPerformers.length > 0 && (
               <SectionCard title="Top Performers">
@@ -850,52 +909,54 @@ export default function GoogleAdsPage() {
         )}
 
         {/* ── Campaign Performance ── */}
-        <SectionCard title="Campaign Performance">
-          <DetailTable
-            headers={[
-              { label: "Campaign", key: "name", render: (v, row) => {
-                const label = classifyGCampaign(googleCampaigns, row);
-                return (
-                  <div>
-                    <p className="font-semibold text-foreground">{v}</p>
-                    {label && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 inline-block ${label.color}`}>{label.text}</span>}
-                  </div>
-                );
-              }},
-              { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
-              { label: "Daily Budget", key: "daily_budget", align: "right", render: (v) => fmtMaybeMYR(v) },
-              { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
-              { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
-              { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-              { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(asPct(v)) : "—" },
-              { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
-              { label: "CPA", key: "cpa", align: "right", render: (v) => v > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
-              { label: "Actions", key: "id", align: "right", render: (_v, row) => {
-                const status = String(row.status || "").toUpperCase();
-                const canPause = status === "ACTIVE" || status === "ENABLED";
-                const canEnable = status === "PAUSED";
-                return (
-                  <div className="flex flex-wrap items-center justify-end gap-1.5">
-                    <RowActionButton
-                      tone={canPause ? "danger" : "positive"}
-                      onClick={() => openCampaignStatusAction(row, canPause ? "pause" : "enable")}
-                      disabled={!canPause && !canEnable}
-                      title={!canPause && !canEnable ? "Only active/enabled or paused campaigns can be changed here." : undefined}
-                    >
-                      {canPause ? "Pause" : "Enable"}
-                    </RowActionButton>
-                    <RowActionButton onClick={() => openCampaignBudgetAction(row, "increase")} disabled={!row.daily_budget}>+10%</RowActionButton>
-                    <RowActionButton onClick={() => openCampaignBudgetAction(row, "decrease")} disabled={!row.daily_budget}>-10%</RowActionButton>
-                  </div>
-                );
-              }},
-            ]}
-            rows={googleCampaigns}
-          />
-        </SectionCard>
+        {isTab("campaigns") && (
+          <SectionCard title="Campaign Performance">
+            <DetailTable
+              headers={[
+                { label: "Campaign", key: "name", render: (v, row) => {
+                  const label = classifyGCampaign(googleCampaigns, row);
+                  return (
+                    <div>
+                      <p className="font-semibold text-foreground">{v}</p>
+                      {label && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 inline-block ${label.color}`}>{label.text}</span>}
+                    </div>
+                  );
+                }},
+                { label: "Status", key: "status", render: (v) => <StatusPill value={v} /> },
+                { label: "Daily Budget", key: "daily_budget", align: "right", render: (v) => fmtMaybeMYR(v) },
+                { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                { label: "Impr.", key: "impressions", align: "right", render: (v) => fmt(v) },
+                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(asPct(v)) : "—" },
+                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                { label: "CPA", key: "cpa", align: "right", render: (v) => v > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
+                { label: "Actions", key: "id", align: "right", render: (_v, row) => {
+                  const status = String(row.status || "").toUpperCase();
+                  const canPause = status === "ACTIVE" || status === "ENABLED";
+                  const canEnable = status === "PAUSED";
+                  return (
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      <RowActionButton
+                        tone={canPause ? "danger" : "positive"}
+                        onClick={() => openCampaignStatusAction(row, canPause ? "pause" : "enable")}
+                        disabled={!canPause && !canEnable}
+                        title={!canPause && !canEnable ? "Only active/enabled or paused campaigns can be changed here." : undefined}
+                      >
+                        {canPause ? "Pause" : "Enable"}
+                      </RowActionButton>
+                      <RowActionButton onClick={() => openCampaignBudgetAction(row, "increase")} disabled={!row.daily_budget}>+10%</RowActionButton>
+                      <RowActionButton onClick={() => openCampaignBudgetAction(row, "decrease")} disabled={!row.daily_budget}>-10%</RowActionButton>
+                    </div>
+                  );
+                }},
+              ]}
+              rows={googleCampaigns}
+            />
+          </SectionCard>
+        )}
 
         {/* ── Performance Max ── */}
-        {hasPmax && (
+        {isTab("campaigns") && hasPmax && (
           <div className="flex flex-col gap-6">
             {pmaxCampaigns.length > 0 && (
               <SectionCard title="Performance Max Campaigns" description="Goal-based campaigns that run across Search, YouTube, Display, Discover, Gmail, and Maps.">
@@ -971,7 +1032,7 @@ export default function GoogleAdsPage() {
         )}
 
         {/* ── Ad Copy Asset Performance (RSA per-asset) ── */}
-        {rsaAssets.length > 0 && (
+        {isTab("creative") && rsaAssets.length > 0 && (
           <SectionCard title={`Ad Copy Asset Performance (${rsaAssets.length})`} description="Google's LOW / GOOD / BEST rating for each responsive search ad headline and description. Replace LOW-rated assets first.">
             <DetailTable
               headers={[
@@ -999,7 +1060,7 @@ export default function GoogleAdsPage() {
         )}
 
         {/* ── Recent Account Changes ── */}
-        {changeHistory.length > 0 && (
+        {isTab("summary") && changeHistory.length > 0 && (
           <SectionCard title={`Recent Account Changes (${changeHistory.length})`} description="Edits made in this account over the last 30 days (Google Ads change history).">
             <DetailTable
               headers={[
@@ -1014,7 +1075,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {adGroups.length > 0 && (
+        {isTab("campaigns") && adGroups.length > 0 && (
           <SectionCard title={`Ad Group Performance (${adGroups.length})`} description="Ad group evidence for budget, keyword, and ad-copy decisions.">
             <TableFilterBar
               preset={adGroupFilter.preset}
@@ -1042,7 +1103,7 @@ export default function GoogleAdsPage() {
         )}
 
         {/* ── Keywords ── */}
-        {keywords.length > 0 && (
+        {isTab("keywords") && keywords.length > 0 && (
           <SectionCard title={`Keywords (${keywords.length})`} description="Keyword-level performance including Quality Scores.">
             <TableFilterBar
               preset={keywordFilter.preset}
@@ -1089,7 +1150,7 @@ export default function GoogleAdsPage() {
         )}
 
         {/* ── Search Query Performance ── */}
-        {searchQueries.length > 0 && (
+        {isTab("keywords") && searchQueries.length > 0 && (
           <SectionCard title={`Search Query Report (${searchQueries.length} queries)`} description="Actual search terms that triggered your ads.">
             <TableFilterBar
               preset={queryFilter.preset}
@@ -1140,7 +1201,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {searchWasteRows.length > 0 && (
+        {isTab("keywords") && searchWasteRows.length > 0 && (
           <SectionCard title="Wasted Search Terms" description="Searches with zero conversions and enough spend to justify negative-keyword review.">
             <table className="w-full text-xs">
               <thead>
@@ -1193,7 +1254,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {negativeSuggestionRows.length > 0 && (
+        {isTab("keywords") && negativeSuggestionRows.length > 0 && (
           <SectionCard title="Negative Keyword Candidates" description="Pattern-based negatives detected from wasted search-term evidence.">
             <table className="w-full text-xs">
               <thead>
@@ -1239,7 +1300,7 @@ export default function GoogleAdsPage() {
         )}
 
         {/* ── Geographic Performance ── */}
-        {geoGoogle.length > 0 && (
+        {isTab("targeting") && geoGoogle.length > 0 && (
           <SectionCard title="Geographic Performance" description="Performance by location targeting radius.">
             <DetailTable
               headers={[
@@ -1256,7 +1317,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {(geoSummary.best_location || geoSummary.total_spend || geoSummary.total_conversions) && (
+        {isTab("targeting") && (geoSummary.best_location || geoSummary.total_spend || geoSummary.total_conversions) && (
           <SectionCard title="Geographic Summary" description="Aggregated Google location findings used for geo recommendations.">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
               <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
@@ -1275,7 +1336,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {deviceRows.length > 0 && (
+        {isTab("targeting") && deviceRows.length > 0 && (
           <SectionCard title="Device Performance" description="Mobile, desktop, and tablet performance from Google Ads device segmentation.">
             <DetailTable
               headers={[
@@ -1294,7 +1355,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {landingRows.length > 0 && (
+        {isTab("creative") && landingRows.length > 0 && (
           <SectionCard title={`Landing Page Heatmap (${landingHeatmap.total_landing_pages || landingRows.length})`} description="Landing pages mapped to keyword/ad-group traffic, conversion rate, and CPA.">
             {landingIssues.length > 0 && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-4">
@@ -1322,7 +1383,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {googleAds.length > 0 && (
+        {isTab("creative") && googleAds.length > 0 && (
           <SectionCard title={`Responsive Search Ads (${googleAds.length})`} description="Ad-level performance, status, landing URL, and first headline for copy analysis.">
             <DetailTable
               headers={[
@@ -1340,7 +1401,7 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {negativeKeywords.length > 0 && (
+        {isTab("keywords") && negativeKeywords.length > 0 && (
           <SectionCard title={`Negative Keyword Inventory (${negativeKeywords.length})`} description="Existing campaign and ad-group negatives used to prevent duplicate recommendations.">
             <DetailTable
               headers={[
@@ -1356,7 +1417,26 @@ export default function GoogleAdsPage() {
           </SectionCard>
         )}
 
-        {(hourlyRows.length > 0 || dailyRows.length > 0) && (
+        {activeTab === "keywords" && keywords.length === 0 && searchQueries.length === 0 && !searchAnalysis.total_queries && negativeKeywords.length === 0 && (
+          <div className="rounded-2xl border border-border/60 bg-surface p-8 text-center shadow-sm">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-hover text-text-muted">
+              <Layers className="h-6 w-6 text-text-muted" />
+            </div>
+            <h3 className="mt-4 text-base font-bold text-foreground">Keywords & Search Queries</h3>
+            <p className="mx-auto mt-2 max-w-md text-xs text-text-muted leading-relaxed">
+              Google Ads keyword and search query metrics are captured during the primary 90-day sync window. Switch back to the 90-day view to view all keyword Quality Scores and search term waste.
+            </p>
+            <button
+              type="button"
+              onClick={() => handleRangeChange(getPresetRange(90))}
+              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-accent-primary px-4 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 transition-opacity"
+            >
+              Switch to Last 90 Days
+            </button>
+          </div>
+        )}
+
+        {isTab("targeting") && (hourlyRows.length > 0 || dailyRows.length > 0) && (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             {hourlyRows.length > 0 && (
               <SectionCard title="Hour of Day Performance" description="Aggregated by hour across enabled Google campaigns in the selected range.">
@@ -1391,9 +1471,28 @@ export default function GoogleAdsPage() {
           </div>
         )}
 
+        {activeTab === "targeting" && geoGoogle.length === 0 && !geoSummary.best_location && deviceRows.length === 0 && hourlyRows.length === 0 && dailyRows.length === 0 && (
+          <div className="rounded-2xl border border-border/60 bg-surface p-8 text-center shadow-sm">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-hover text-text-muted">
+              <Clock className="h-6 w-6 text-text-muted" />
+            </div>
+            <h3 className="mt-4 text-base font-bold text-foreground">Geo, Device & Time Targeting</h3>
+            <p className="mx-auto mt-2 max-w-md text-xs text-text-muted leading-relaxed">
+              Google Ads geographic, device, and time-of-day breakdowns are captured during the primary 90-day sync window. Switch back to the 90-day view to view full targeting breakdowns.
+            </p>
+            <button
+              type="button"
+              onClick={() => handleRangeChange(getPresetRange(90))}
+              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-accent-primary px-4 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 transition-opacity"
+            >
+              Switch to Last 90 Days
+            </button>
+          </div>
+        )}
+
         {/* ── Conversion Tracking Health ── */}
-        {activeCampaignsG.length > 0 && (
-          <SectionCard title="Conversion Tracking Health" description="Which active campaigns are recording conversions — a broken pixel is often the real problem.">
+        {isTab("summary") && activeCampaignsG.length > 0 && (
+          <SectionCard title="Conversion Tracking Health" description="Which active campaigns are recording conversions — an unverified Google tag or misconfigured conversion action is often the underlying issue.">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
               <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Active Campaigns</p>
@@ -1424,9 +1523,6 @@ export default function GoogleAdsPage() {
             )}
           </SectionCard>
         )}
-
-        {/* ── Recommendations pointer ── */}
-        <RecommendationsPointer platform="Google" recommendations={d.recommendations} />
 
       </div>
       <ActionDrawer

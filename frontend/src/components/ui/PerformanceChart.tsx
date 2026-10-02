@@ -41,7 +41,7 @@ function ChartTooltip({ active, payload, label, formatValue }: {
   );
 }
 
-export function PerformanceChart({ data }: { data: TimeseriesPoint[] }) {
+export function PerformanceChart({ data, platform = "All" }: { data: TimeseriesPoint[]; platform?: "All" | "Google" | "Meta" }) {
   const [metric, setMetric] = useState<Metric>("spend");
 
   const isSpend = metric === "spend";
@@ -49,13 +49,17 @@ export function PerformanceChart({ data }: { data: TimeseriesPoint[] }) {
   const metaKey = isSpend ? "meta_spend" : "meta_conversions";
   const formatValue = (val: number) => (isSpend ? myr(val) : num(val));
 
+  const showGoogle = platform === "All" || platform === "Google";
+  const showMeta = platform === "All" || platform === "Meta";
+  const platformLabel = platform === "All" ? "by platform" : `(${platform} Ads)`;
+
   return (
     <div className="bg-surface shadow-sm rounded-2xl p-6 w-full flex flex-col border border-border/60">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h3 className="text-lg font-bold text-foreground">Campaign Performance</h3>
           <p className="text-xs font-medium text-text-muted mt-1">
-            Daily {isSpend ? "spend" : "conversions"} by platform
+            Daily {isSpend ? "spend" : "conversions"} {platformLabel}
           </p>
         </div>
 
@@ -77,11 +81,11 @@ export function PerformanceChart({ data }: { data: TimeseriesPoint[] }) {
       </div>
 
       {!data || data.length === 0 ? (
-        <div className="h-[340px] w-full flex items-center justify-center">
+        <div className="h-85 w-full flex items-center justify-center">
           <p className="text-sm font-medium text-text-muted">No trend data yet</p>
         </div>
       ) : (
-        <div className="h-[340px] w-full">
+        <div className="h-85 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <defs>
@@ -114,8 +118,12 @@ export function PerformanceChart({ data }: { data: TimeseriesPoint[] }) {
               />
               <Tooltip cursor={{ stroke: "var(--color-border)", strokeWidth: 1 }} content={<ChartTooltip formatValue={formatValue} />} />
 
-              <Area type="monotone" dataKey={googleKey} name="Google Ads" stroke={GOOGLE_COLOR} strokeWidth={2.5} fillOpacity={1} fill="url(#perfGoogle)" />
-              <Area type="monotone" dataKey={metaKey} name="Meta Ads" stroke={META_COLOR} strokeWidth={2.5} fillOpacity={1} fill="url(#perfMeta)" />
+              {showGoogle && (
+                <Area type="monotone" dataKey={googleKey} name="Google Ads" stroke={GOOGLE_COLOR} strokeWidth={2.5} fillOpacity={1} fill="url(#perfGoogle)" />
+              )}
+              {showMeta && (
+                <Area type="monotone" dataKey={metaKey} name="Meta Ads" stroke={META_COLOR} strokeWidth={2.5} fillOpacity={1} fill="url(#perfMeta)" />
+              )}
             </AreaChart>
           </ResponsiveContainer>
         </div>

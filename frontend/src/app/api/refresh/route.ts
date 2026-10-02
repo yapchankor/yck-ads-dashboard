@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { getAuthSession } from "@/lib/auth-helper";
 import { NextResponse } from "next/server";
 import { resolveClientName } from "@/lib/server-config";
 
@@ -17,7 +17,7 @@ function isValidIsoDate(value: unknown) {
 }
 
 export async function POST(request: Request) {
-  const { userId } = await auth();
+  const { userId } = await getAuthSession();
 
   if (!userId) {
     return new NextResponse("Unauthorized", { status: 401 });

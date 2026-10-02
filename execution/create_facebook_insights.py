@@ -701,7 +701,9 @@ def main():
 
     budget_analysis = analyze_budget_pacing(
         metrics.get('campaigns', []),
-        days_in_range
+        days_in_range,
+        ad_sets=metrics.get('ad_sets', []),
+        date_range=metrics.get('date_range')
     )
     print(f"  Budget: {len(budget_analysis.get('campaign_pacing', []))} campaigns tracked")
 

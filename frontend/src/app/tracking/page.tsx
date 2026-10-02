@@ -41,6 +41,12 @@ interface TrackedItem {
     conversions?: number | null;
     cpa?: number | null;
   };
+  applied_by?: {
+    name?: string;
+    email?: string;
+    user_id?: string;
+    avatar?: string;
+  };
   snapshots?: {
     day_0?: unknown;
     day_7?: MilestoneSnapshot;
@@ -81,35 +87,6 @@ function getBeforeAfter(item: TrackedItem): string {
   return "—";
 }
 
-function getLatestSnapshot(item: TrackedItem) {
-  return item.snapshots?.day_30 || item.snapshots?.day_14 || item.snapshots?.day_7 || null;
-}
-
-function getSnapshotSummary(item: TrackedItem) {
-  // The backend now returns an already-scoped, honest summary (e.g. "Campaign CPA improved..."
-  // or "Account-level CPA improved..."), so we surface it verbatim.
-  return getLatestSnapshot(item)?.summary || null;
-}
-
-function getSnapshotScope(item: TrackedItem): string | null {
-  return getLatestSnapshot(item)?.scope || null;
-}
-
-function getSnapshotAttributionNote(item: TrackedItem): string {
-  const scope = getSnapshotScope(item);
-  if (scope && scope !== "account") {
-    return `Measured on the ${scope} that changed — post-change window vs the matched period before.`;
-  }
-  return "Account-level trend since apply, not attributed to this single change.";
-}
-
-function getSnapshotTone(item: TrackedItem) {
-  const status = getLatestSnapshot(item)?.actual_impact?.status?.toLowerCase();
-  if (status === "worse") return "text-red-600";
-  if (status === "improved") return "text-green-700";
-  if (status === "needs data") return "text-amber-700";
-  return "text-text-muted";
-}
 
 export default function TrackingPage() {
   const [trackedItems, setTrackedItems] = useState<TrackedItem[]>([]);
@@ -313,7 +290,6 @@ export default function TrackingPage() {
                       <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Applied Date</th>
                       <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Expected Outcome</th>
                       <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Status</th>
-                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Outcome</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
@@ -391,37 +367,12 @@ export default function TrackingPage() {
                             }
                           </span>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center justify-between group">
-                            {item.status === "Dismissed" ? (
-                              <span className="text-[10px] font-bold text-text-muted uppercase">Removed from queue</span>
-                            ) : item.status === "Failed" ? (
-                              <span className="text-[10px] font-bold text-red-600 uppercase">Action failed</span>
-                            ) : getSnapshotSummary(item) ? (
-                              <div className="flex flex-col gap-1">
-                                <span className={`text-xs font-bold ${getSnapshotTone(item)}`}>{getSnapshotSummary(item)}</span>
-                                <span className="text-[10px] font-medium text-text-muted">{getSnapshotAttributionNote(item)}</span>
-                              </div>
-                            ) : item.days_active < 7 ? (
-                              <div className="flex items-center gap-2">
-                                <div className="h-1.5 w-16 bg-border/40 rounded-full overflow-hidden">
-                                  <div className="h-full bg-accent-lime animate-shimmer" style={{ width: "30%" }} />
-                                </div>
-                                <span className="text-[10px] font-bold text-text-muted uppercase">Collecting Data</span>
-                              </div>
-                            ) : (
-                              <span className="text-[10px] font-bold text-text-muted uppercase">Awaiting milestone snapshot</span>
-                            )}
-
-                            <span className="text-[10px] font-bold uppercase text-text-muted">Audit history</span>
-                          </div>
-                        </td>
                       </tr>
                     ))}
 
                     {trackedItems.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-6 py-20 text-center">
+                        <td colSpan={5} className="px-6 py-20 text-center">
                           <div className="flex flex-col items-center gap-3 opacity-40">
                             <AlertCircle className="w-10 h-10 text-text-muted" />
                             <p className="text-sm font-medium text-text-muted max-w-xs">
@@ -593,6 +544,7 @@ export default function TrackingPage() {
                       <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Target</th>
                       <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Before → After</th>
                       <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Execution Status</th>
+                      <th className="px-6 py-4 text-[10px] font-bold text-text-muted uppercase tracking-widest">Executed By</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30">
@@ -662,12 +614,38 @@ export default function TrackingPage() {
                             <span className="text-[10px] text-text-muted">—</span>
                           )}
                         </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            {item.applied_by?.avatar ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img
+                                src={item.applied_by.avatar}
+                                alt={item.applied_by.name || "Operator"}
+                                className="w-5 h-5 rounded-full object-cover border border-border/60 shrink-0"
+                              />
+                            ) : (
+                              <div className="w-5 h-5 rounded-full bg-surface-hover border border-border/60 flex items-center justify-center text-[9px] font-bold text-text-muted shrink-0">
+                                {(item.applied_by?.name || "SYS").slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-foreground truncate max-w-32.5">
+                                {item.applied_by?.name || "System"}
+                              </p>
+                              {item.applied_by?.email && (
+                                <p className="text-[10px] text-text-muted truncate max-w-32.5">
+                                  {item.applied_by.email}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </td>
                       </tr>
                     ))}
 
                     {filteredChangelog.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-6 py-20 text-center">
+                        <td colSpan={7} className="px-6 py-20 text-center">
                           <div className="flex flex-col items-center gap-3 opacity-40">
                             <History className="w-10 h-10 text-text-muted" />
                             <p className="text-sm font-medium text-text-muted max-w-xs">

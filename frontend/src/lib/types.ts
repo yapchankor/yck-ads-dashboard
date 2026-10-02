@@ -112,6 +112,42 @@ export type DashboardMetrics = {
   dateRange?: { start: string; end: string };
 };
 
+export type PacingSummary = {
+  total_spend?: number;
+  daily_avg_spend?: number;
+  projected_monthly_spend?: number;
+  days_in_period?: number;
+  days_in_month?: number;
+  days_elapsed_this_month?: number;
+  days_remaining_this_month?: number;
+  planned_monthly_budget?: number | null;
+  pacing_pct?: number | null;
+  status?: "on_track" | "overpacing" | "underpacing" | "unknown";
+  account_daily_budget?: number | null;
+  shared_budgets_count?: number;
+  campaign_pacing?: Array<{
+    campaign_name: string;
+    campaign_id?: string;
+    budget_type?: string;
+    budget_structure?: string;
+    budget?: number;
+    avg_daily_spend?: number;
+    utilization_pct?: number;
+    status?: string;
+  }>;
+  alerts?: Array<{
+    severity: string;
+    message: string;
+    recommendation?: string;
+  }>;
+};
+
+export type BudgetPacingData = PacingSummary & {
+  google?: PacingSummary;
+  meta?: PacingSummary;
+  blended?: PacingSummary;
+};
+
 export type DashboardData = {
   metrics: DashboardMetrics;
   recommendations: Recommendation[];
@@ -136,6 +172,7 @@ export type DashboardData = {
   pmax_channels?: Record<string, any>[];
   rsa_asset_performance?: Record<string, any>[];
   change_history?: Record<string, any>[];
+  budget_pacing?: BudgetPacingData | null;
 };
 
 export type TimeseriesPoint = {

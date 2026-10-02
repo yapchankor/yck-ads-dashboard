@@ -5,6 +5,7 @@ import { UnifiedMetricsCard, AnomalyAlert } from "@/components/ui/UnifiedMetrics
 import { DataTable } from "@/components/ui/DataTable";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { PerformanceChart } from "@/components/ui/PerformanceChart";
+import { NeedsAttentionPanel } from "@/components/ui/NeedsAttentionPanel";
 import React, { useEffect, useState } from "react";
 import { DashboardData } from "@/lib/types";
 import { mockMetrics, mockRecommendations, mockCampaigns } from "@/lib/mock-data";
@@ -25,6 +26,7 @@ export default function Home() {
   const [refreshingRange, setRefreshingRange] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const [uncachedNotice, setUncachedNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [platformFilter, setPlatformFilter] = useState<"All" | "Google" | "Meta">("All");
@@ -63,6 +65,7 @@ export default function Home() {
 
     setRefreshingRange(true);
     setRefreshError(null);
+    setUncachedNotice(null);
     const clientName = data.client_name;
 
     try {
@@ -72,13 +75,9 @@ export default function Home() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load dashboard date range.";
       if (message.includes("(409)")) {
-        // Range not cached yet — snap back to default and reload silently
-        try {
-          const fallback = await fetchDashboardData(clientName);
-          setData({ ...fallback, isLive: true });
-        } catch {
-          setRefreshError(message);
-        }
+        setUncachedNotice(
+          `The selected range (${range.startDate} to ${range.endDate}) is not in the fast cache yet. Click "Sync Now" to generate data for this period. Showing latest available data below.`
+        );
       } else {
         setRefreshError(message);
       }
@@ -90,38 +89,54 @@ export default function Home() {
   async function handleSync() {
     if (!data || syncing) return;
     setSyncing(true);
-    setSyncWarning(null);
+    setSyncWarning("Sync initiated — pulling fresh data from Google Ads and Meta APIs...");
     const clientName = data.client_name;
     const baselineFetchedAt = data.fetched_at ?? null;
     const range: DateRangeSelection = normalizeDashboardDateRange(data.date_range);
 
     try {
-      await triggerDashboardRefresh({ range, clientName });
-      setSyncWarning("Sync started — refreshing 90 days of data. Takes 5–10 min. This page will update automatically.");
-    } catch {
-      setSyncWarning("Could not trigger sync. Try again.");
-      setSyncing(false);
-      return;
-    }
+      const refreshResult = await triggerDashboardRefresh({ range, clientName });
+      const jobId = refreshResult?.job_id;
+      setSyncWarning("Sync in progress — refreshing live ad network data. This takes 2–5 minutes. The dashboard will automatically update.");
 
-    setSyncing(false);
-
-    // Background poll — silently update when the refresh lands
-    (async () => {
+      let completed = false;
       for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 15_000));
+        await new Promise((r) => setTimeout(r, 10_000));
         try {
+          if (jobId) {
+            const statusRes = await fetch(`/api/refresh-status?job_id=${encodeURIComponent(jobId)}`);
+            if (statusRes.ok) {
+              const statusData = await statusRes.json();
+              if (statusData.status === "completed" || statusData.state === "completed") {
+                completed = true;
+                break;
+              }
+              if (statusData.status === "failed" || statusData.state === "failed") {
+                throw new Error("Data sync encountered an error on the server.");
+              }
+            }
+          }
           const fresh = await fetchDashboardData(clientName);
           if (fresh?.fetched_at && fresh.fetched_at !== baselineFetchedAt) {
             setData({ ...fresh, isLive: true });
-            setSyncWarning(null);
-            return;
+            completed = true;
+            break;
           }
-        } catch {
-          // ignore, keep polling
+        } catch (pollErr) {
+          console.warn("Sync status poll:", pollErr);
         }
       }
-    })();
+
+      const fresh = await fetchDashboardData(clientName);
+      setData({ ...fresh, isLive: true });
+      setUncachedNotice(null);
+      setSyncWarning(completed ? "Sync complete! Data is fully up to date." : "Sync job completed. Dashboard refreshed.");
+      setTimeout(() => setSyncWarning(null), 5000);
+    } catch (err) {
+      setSyncWarning(err instanceof Error ? err.message : "Could not complete sync. Please try again.");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   if (loading) {
@@ -169,8 +184,8 @@ export default function Home() {
       totalConversions,
       blendedCPA: totalConversions > 0 ? totalSpend / totalConversions : 0,
       blendedROAS: 0,
-      spendDelta: data.metrics.spendDelta, // Keep global deltas for now
-      cpaDelta: data.metrics.cpaDelta,
+      spendDelta: undefined,
+      cpaDelta: undefined,
       dateRange: data.metrics.dateRange,
     };
   })();
@@ -218,6 +233,25 @@ export default function Home() {
     });
   }
 
+  // Cross-Platform Budget Pacing resolution (Phase 3)
+  const pacingData = data.budget_pacing;
+  const activePacing = platformFilter === "All"
+    ? (pacingData?.blended || pacingData || null)
+    : platformFilter === "Google"
+    ? (pacingData?.google || pacingData || null)
+    : (pacingData?.meta || null);
+
+  function handleRecommendationAction(recId: string, status: "applied" | "manual" | "dismissed") {
+    if (!data) return;
+    const newStatus = status === "dismissed" ? "Dismissed" : "Tracking";
+    setData({
+      ...data,
+      recommendations: data.recommendations.map((r) =>
+        r.id === recId ? { ...r, status: newStatus as any } : r
+      ),
+    });
+  }
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-6 pb-10">
@@ -237,6 +271,12 @@ export default function Home() {
             <p className="text-sm font-medium text-text-muted mt-1">
               <strong className="text-foreground font-bold">Welcome back</strong>, here is how your ads are performing today.
             </p>
+            {data.fetched_at && (
+              <p className="text-[11px] font-medium text-text-muted mt-1 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                Data updated {new Date(data.fetched_at).toLocaleDateString([], { month: "short", day: "numeric" })} at {new Date(data.fetched_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </p>
+            )}
           </div>
           
           {/* Controls */}
@@ -285,6 +325,18 @@ export default function Home() {
         </div>
 
         {/* Unified Metrics (Emitly Style) */}
+        {uncachedNotice && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800 flex items-center justify-between gap-4">
+            <p>{uncachedNotice}</p>
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="whitespace-nowrap px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 transition-colors"
+            >
+              Sync Now
+            </button>
+          </div>
+        )}
         {syncWarning && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
             {syncWarning}
@@ -296,13 +348,28 @@ export default function Home() {
           </div>
         )}
 
-        <UnifiedMetricsCard metrics={metricsWithROAS} cpaLabel={cpaLabel} anomalyAlerts={anomalyAlerts} />
+        <UnifiedMetricsCard
+          metrics={metricsWithROAS}
+          cpaLabel={cpaLabel}
+          anomalyAlerts={anomalyAlerts}
+          pacing={activePacing}
+        />
 
-        <PerformanceChart data={data.timeseries ?? []} />
+        <PerformanceChart data={data.timeseries ?? []} platform={platformFilter} />
+
+        <NeedsAttentionPanel
+          recommendations={data.recommendations || []}
+          platformFilter={platformFilter}
+          clientName={data.client_name}
+          baselineMetrics={data.metrics}
+          onRecommendationAction={handleRecommendationAction}
+        />
 
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between mb-1">
-             <h2 className="text-base font-bold text-foreground">Top Performing Campaigns</h2>
+             <h2 className="text-base font-bold text-foreground">
+               {platformFilter === "All" ? "Top Performing Campaigns" : `Top Performing Campaigns (${platformFilter} Ads)`}
+             </h2>
           </div>
           <DataTable data={filteredCampaigns} />
         </div>

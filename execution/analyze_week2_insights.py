@@ -5,13 +5,15 @@ Includes: Budget Pacing, Device Performance, Landing Page Heatmap
 """
 
 import json
+import calendar
 from datetime import datetime, timedelta
 from collections import defaultdict
 
 
 def analyze_budget_pacing(metrics_data, monthly_budget=None, currency_symbol="RM "):
     """
-    Analyze budget pacing and forecast end-of-month spend.
+    Analyze budget pacing and forecast end-of-month spend with exact month length
+    and shared campaign budget deduplication.
 
     Args:
         metrics_data: Google Ads metrics data
@@ -24,68 +26,109 @@ def analyze_budget_pacing(metrics_data, monthly_budget=None, currency_symbol="RM
     date_range = metrics_data.get('date_range', {})
 
     total_spend = summary.get('total_cost', 0)
-    start_date = datetime.strptime(date_range.get('start_date', ''), '%Y-%m-%d')
-    end_date = datetime.strptime(date_range.get('end_date', ''), '%Y-%m-%d')
+    start_date_str = date_range.get('start_date', '')
+    end_date_str = date_range.get('end_date', '')
 
-    days_in_period = (end_date - start_date).days + 1
+    start_date = None
+    end_date = None
+    try:
+        if start_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+        if end_date_str:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+    except (ValueError, TypeError):
+        pass
+
+    days_in_period = ((end_date - start_date).days + 1) if (start_date and end_date) else metrics_data.get('days_in_period', 30)
     daily_avg_spend = total_spend / days_in_period if days_in_period > 0 else 0
 
-    # Calculate monthly projections
+    # Calculate exact monthly projections using calendar.monthrange
     now = datetime.now()
-    days_in_month = (datetime(now.year, now.month % 12 + 1, 1) - timedelta(days=1)).day
-    days_elapsed = now.day
-    days_remaining = days_in_month - days_elapsed
+    ref_date = end_date if end_date else now
+    year = ref_date.year
+    month = ref_date.month
+    days_in_month = calendar.monthrange(year, month)[1]
+    days_elapsed = min(ref_date.day, days_in_month)
+    days_remaining = max(0, days_in_month - days_elapsed)
 
     projected_monthly_spend = daily_avg_spend * days_in_month
+
+    # Deduplicate shared Google campaign budgets
+    active_campaigns = [
+        c for c in metrics_data.get('campaigns', [])
+        if c.get('status') in ('ENABLED', 'Active')
+    ]
+    shared_budgets = {}
+    unshared_daily_budget = 0.0
+    for c in active_campaigns:
+        d_b = c.get('daily_budget') or 0
+        if d_b > 0:
+            b_key = c.get('budget_id') or c.get('budget_resource_name')
+            if b_key:
+                shared_budgets[str(b_key)] = d_b
+            else:
+                unshared_daily_budget += d_b
+
+    account_daily_budget = sum(shared_budgets.values()) + unshared_daily_budget
+    calculated_monthly_budget = (account_daily_budget * days_in_month) if account_daily_budget > 0 else None
+    effective_monthly_budget = monthly_budget if monthly_budget is not None else calculated_monthly_budget
+
+    target_daily_spend = (effective_monthly_budget / days_in_month) if (effective_monthly_budget and days_in_month > 0) else None
+    spend_variance_pct = (((daily_avg_spend - target_daily_spend) / target_daily_spend) * 100) if (target_daily_spend and target_daily_spend > 0) else None
+    pacing_pct = ((projected_monthly_spend / effective_monthly_budget) * 100) if (effective_monthly_budget and effective_monthly_budget > 0) else None
+
+    if pacing_pct is not None:
+        pacing_status = "overpacing" if pacing_pct > 110 else "underpacing" if pacing_pct < 85 else "on_track"
+    else:
+        pacing_status = "unknown"
 
     pacing_analysis = {
         "daily_avg_spend": daily_avg_spend,
         "days_in_period": days_in_period,
+        "days_in_month": days_in_month,
         "projected_monthly_spend": projected_monthly_spend,
         "days_elapsed_this_month": days_elapsed,
         "days_remaining_this_month": days_remaining,
+        "shared_budgets_count": len(shared_budgets),
+        "account_daily_budget": round(account_daily_budget, 2) if account_daily_budget > 0 else None,
+        "planned_monthly_budget": round(effective_monthly_budget, 2) if effective_monthly_budget else None,
+        "pacing_pct": round(pacing_pct, 1) if pacing_pct is not None else None,
+        "status": pacing_status,
         "alerts": []
     }
 
-    if monthly_budget:
-        pacing_analysis["monthly_budget"] = monthly_budget
-        target_daily_spend = monthly_budget / days_in_month
+    if effective_monthly_budget and target_daily_spend:
+        pacing_analysis["monthly_budget"] = effective_monthly_budget
         pacing_analysis["target_daily_spend"] = target_daily_spend
-
-        # Calculate variance
-        spend_variance_pct = ((daily_avg_spend - target_daily_spend) / target_daily_spend * 100) if target_daily_spend > 0 else 0
         pacing_analysis["spend_variance_pct"] = spend_variance_pct
 
-        # Budget utilization
         current_month_spend_estimate = daily_avg_spend * days_elapsed
-        budget_utilization = (current_month_spend_estimate / monthly_budget * 100) if monthly_budget > 0 else 0
+        budget_utilization = (current_month_spend_estimate / effective_monthly_budget * 100) if effective_monthly_budget > 0 else 0
         pacing_analysis["budget_utilization_pct"] = budget_utilization
 
-        # Projected end date if continuing at current pace
         if daily_avg_spend > 0:
-            days_until_budget_depleted = monthly_budget / daily_avg_spend
+            days_until_budget_depleted = effective_monthly_budget / daily_avg_spend
             pacing_analysis["days_until_budget_depleted"] = days_until_budget_depleted
 
-        # Generate alerts
-        if spend_variance_pct > 20:
+        if spend_variance_pct is not None and spend_variance_pct > 20:
             pacing_analysis["alerts"].append({
                 "severity": "HIGH",
                 "message": f"Spending {spend_variance_pct:.0f}% faster than target. Budget may run out by day {int(days_until_budget_depleted)}.",
                 "recommendation": "Consider reducing bids or pausing low-performing campaigns"
             })
-        elif spend_variance_pct < -20:
+        elif spend_variance_pct is not None and spend_variance_pct < -20:
             pacing_analysis["alerts"].append({
                 "severity": "MEDIUM",
                 "message": f"Spending {abs(spend_variance_pct):.0f}% slower than target. May underutilize budget.",
                 "recommendation": "Consider increasing bids on top performers or expanding keywords"
             })
 
-        if projected_monthly_spend > monthly_budget:
-            overspend = projected_monthly_spend - monthly_budget
+        if projected_monthly_spend > effective_monthly_budget:
+            overspend = projected_monthly_spend - effective_monthly_budget
             pacing_analysis["alerts"].append({
                 "severity": "WARNING",
-                "message": f"Projected to exceed budget by {currency_symbol}{overspend:.2f} ({(overspend/monthly_budget*100):.0f}%)",
-                "recommendation": f"Reduce daily spend to {currency_symbol}{monthly_budget / days_in_month:.2f}"
+                "message": f"Projected to exceed budget by {currency_symbol}{overspend:.2f} ({(overspend/effective_monthly_budget*100):.0f}%)",
+                "recommendation": f"Reduce daily spend to {currency_symbol}{effective_monthly_budget / days_in_month:.2f}"
             })
 
     return pacing_analysis

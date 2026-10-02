@@ -3,11 +3,12 @@
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ActionDrawer } from "@/components/ui/ActionDrawer";
 import { DatePicker } from "@/components/ui/DatePicker";
-import { DateRangeSelection } from "@/lib/date-range";
+import { DateRangeSelection, getPresetRange } from "@/lib/date-range";
 import { fetchDashboardData } from "@/lib/dashboard-refresh";
 import { ActionPreview } from "@/lib/types";
 import { RecommendationsPointer } from "@/components/ui/RecommendationsPointer";
 import { formatCurrency, formatNumber } from "@/lib/client-config";
+import { Clock, Layers } from "lucide-react";
 import React, { useEffect, useState } from "react";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -419,13 +420,29 @@ function buildMetaInsights({
   return insights.slice(0, 6);
 }
 
+type MetaTab = "overview" | "campaigns" | "creative" | "breakdowns" | "geo_time" | "all";
+
+const META_TABS: { id: MetaTab; label: string }[] = [
+  { id: "overview", label: "Overview & Insights" },
+  { id: "campaigns", label: "Campaigns & Ad Sets" },
+  { id: "creative", label: "Creative & Fatigue" },
+  { id: "breakdowns", label: "Placements & Demographics" },
+  { id: "geo_time", label: "Geo, Device & Time" },
+  { id: "all", label: "All Modules" },
+];
+
 export default function MetaAdsPage() {
+  const [activeTab, setActiveTab] = useState<MetaTab>("overview");
   const [d, setD] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshingRange, setRefreshingRange] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [actionDraft, setActionDraft] = useState<ActionPreview | null>(null);
+
+  function isTab(tab: MetaTab) {
+    return activeTab === "all" || activeTab === tab;
+  }
 
   useEffect(() => {
     fetchDashboardData()
@@ -510,6 +527,13 @@ export default function MetaAdsPage() {
     conversions: metaConversions,
     cpa: metaCPA,
   });
+
+  function getCpaBadgeStatus(v: number) {
+    if (!v || v <= 0 || !metaCPA || metaCPA <= 0) return null;
+    if (v <= metaCPA * 0.85) return true;
+    if (v >= metaCPA * 1.25) return false;
+    return null;
+  }
 
   function classifyMetaCampaign(allCampaigns: any[], row: any): { text: string; color: string } | null {
     const isActive = row.status === "Active" || String(row.status || "").toUpperCase() === "ACTIVE";
@@ -674,6 +698,12 @@ export default function MetaAdsPage() {
               Facebook &amp; Instagram campaign performance for <strong className="text-foreground">{d.account_name || d.client_name || "Selected client"}</strong>
               {d.date_range ? ` · ${d.date_range.start_date || ""} to ${d.date_range.end_date || ""}` : ""}
             </p>
+            {d.fetched_at && (
+              <p className="text-[11px] font-medium text-text-muted mt-1 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                Data updated {new Date(d.fetched_at).toLocaleDateString([], { month: "short", day: "numeric" })} at {new Date(d.fetched_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </p>
+            )}
           </div>
           <DatePicker
             currentRange={d.date_range}
@@ -699,7 +729,32 @@ export default function MetaAdsPage() {
           { label: "Best Placement", value: bestPlacement ? bestPlacement.placement_name.split(" - ")[1] || bestPlacement.placement_name : "—", sub: bestPlacement ? `CPA ${fmtMYR(bestPlacement.cpa)}` : undefined },
         ]} />
 
-        {metaAnomalyAlerts.length > 0 && (
+        {/* ── Recommendations pointer ── */}
+        <RecommendationsPointer platform="Meta" recommendations={d.recommendations} />
+
+        {/* ── Sub-Navigation Tabs ── */}
+        <div className="flex items-center gap-2 overflow-x-auto border-b border-border/60 pb-3">
+          {META_TABS.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`whitespace-nowrap rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                  isActive
+                    ? "bg-accent-primary text-white shadow-sm"
+                    : "bg-surface border border-border/60 text-text-muted hover:bg-surface-hover hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── Overview & Insights Tab ── */}
+        {isTab("overview") && metaAnomalyAlerts.length > 0 && (
           <div className="flex flex-col gap-2">
             {metaAnomalyAlerts.map((alert, i) => (
               <div key={i} className={`rounded-xl border px-4 py-3 ${alert.severity === "critical" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}>
@@ -711,8 +766,7 @@ export default function MetaAdsPage() {
           </div>
         )}
 
-        {/* ── AI Insights ── */}
-        {metaInsights.length > 0 && (
+        {isTab("overview") && metaInsights.length > 0 && (
           <SectionCard title="AI Insights Summary">
             <div className="flex flex-col gap-3 p-4">
               {metaInsights.map((insight, i) => (
@@ -722,56 +776,42 @@ export default function MetaAdsPage() {
           </SectionCard>
         )}
 
-        {/* ── Recommendations pointer ── */}
-        <RecommendationsPointer platform="Meta" recommendations={d.recommendations} />
-
-        {/* ── Campaign Performance ── */}
-        <SectionCard title="Campaign Performance">
-          <DetailTable
-            headers={[
-              { label: "Campaign", key: "name", render: (v, row) => {
-                const label = classifyMetaCampaign(metaCampaigns, row);
-                return (
-                  <div>
-                    <p className="font-semibold text-foreground">{v}</p>
-                    {label && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 inline-block ${label.color}`}>{label.text}</span>}
+        {/* ── Campaigns & Ad Sets Tab ── */}
+        {isTab("campaigns") && (
+          <SectionCard title="Campaign Performance">
+            <DetailTable
+              headers={[
+                { label: "Campaign", key: "name", render: (v, row) => {
+                  const label = classifyMetaCampaign(metaCampaigns, row);
+                  return (
+                    <div>
+                      <p className="font-semibold text-foreground">{v}</p>
+                      {label && <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 inline-block ${label.color}`}>{label.text}</span>}
+                    </div>
+                  );
+                }},
+                { label: "Status", key: "status", render: (v) => <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${v === "Active" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{v}</span> },
+                { label: "Objective", key: "objective" },
+                { label: "Spend", key: "spend", align: "right", render: (v) => <span className="font-medium">{fmtMYR(v)}</span> },
+                { label: "Reach", key: "reach", align: "right", render: (v) => fmt(v) },
+                { label: "Freq", key: "frequency", align: "right", render: (v) => v ? v.toFixed(1) : "—" },
+                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(v) : "—" },
+                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                { label: "CPA", key: "cpa", align: "right", render: (v) => <MetricBadge value={fmtMYR(v)} good={getCpaBadgeStatus(v)} /> },
+                { label: "Actions", key: "id", align: "right", render: (_v, row) => (
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    <RowActionButton onClick={() => openMetaCampaignBudgetAction(row, "increase")} disabled={!row.daily_budget}>+10%</RowActionButton>
+                    <RowActionButton onClick={() => openMetaCampaignBudgetAction(row, "decrease")} disabled={!row.daily_budget}>-10%</RowActionButton>
                   </div>
-                );
-              }},
-              { label: "Status", key: "status", render: (v) => <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${v === "Active" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>{v}</span> },
-              { label: "Objective", key: "objective" },
-              { label: "Spend", key: "spend", align: "right", render: (v) => <span className="font-medium">{fmtMYR(v)}</span> },
-              { label: "Reach", key: "impressions", align: "right", render: (v) => fmt(v) },
-              { label: "Freq", key: "frequency", align: "right", render: (v) => v ? v.toFixed(1) : "—" },
-              { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-              { label: "CTR", key: "ctr", align: "right", render: (v) => v ? fmtPct(v) : "—" },
-              { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
-              { label: "CPA", key: "cpa", align: "right", render: (v) => <MetricBadge value={fmtMYR(v)} good={v > 0 && v < 5 ? true : v === 0 ? null : false} /> },
-              { label: "Actions", key: "id", align: "right", render: (_v, row) => (
-                <div className="flex flex-wrap items-center justify-end gap-1.5">
-                  <RowActionButton onClick={() => openMetaCampaignBudgetAction(row, "increase")} disabled={!row.daily_budget}>+10%</RowActionButton>
-                  <RowActionButton onClick={() => openMetaCampaignBudgetAction(row, "decrease")} disabled={!row.daily_budget}>-10%</RowActionButton>
-                </div>
-              )},
-            ]}
-            rows={metaCampaigns}
-          />
-        </SectionCard>
-
-        {/* ── Creative Performance ── */}
-        {ads.length > 0 && (
-          <SectionCard title="Creative Performance" description="Ad-level creative performance sorted by spend. Amber = high frequency; red = fatigued (high frequency and CPA well above account average).">
-            <p className="px-4 pt-3 text-[11px] text-text-muted">Hook, Hold and video retention are shown for the full reporting period, not custom date ranges.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
-              {ads.map((ad: any, i: number) => (
-                <CreativeCard key={ad.ad_id || i} ad={ad} avgCpa={metaCPA} onPauseAd={openMetaPauseAdAction} />
-              ))}
-            </div>
+                )},
+              ]}
+              rows={metaCampaigns}
+            />
           </SectionCard>
         )}
 
-        {/* ── Ad Set Performance ── */}
-        {adSets.length > 0 && (
+        {isTab("campaigns") && adSets.length > 0 && (
           <SectionCard title="Ad Set Performance" description="Ad sets with targeting and performance metrics.">
             <DetailTable
               headers={[
@@ -796,62 +836,151 @@ export default function MetaAdsPage() {
           </SectionCard>
         )}
 
-        {/* ── Placement Performance ── */}
-        {placements.length > 0 && (
-          <SectionCard title="Placement Performance" description="Performance across Facebook, Instagram, Audience Network, and Messenger.">
-            <DetailTable
-              headers={[
-                { label: "Placement", key: "placement_name" },
-                { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
-                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v) },
-                { label: "CPM", key: "cpm", align: "right", render: (v) => fmtMYR(v) },
-                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
-                { label: "CPA", key: "cpa", align: "right", render: (v) => <MetricBadge value={fmtMYR(v)} good={v > 0 && v < 5 ? true : v === 0 ? null : false} /> },
-              ]}
-              rows={placements}
-            />
+        {/* ── Creative & Fatigue Tab ── */}
+        {isTab("creative") && ads.length > 0 && (
+          <SectionCard title="Creative Performance" description="Ad-level creative performance sorted by spend. Amber = high frequency; red = fatigued (high frequency and CPA well above account average).">
+            <p className="px-4 pt-3 text-[11px] text-text-muted">Hook, Hold and video retention are shown for the full reporting period, not custom date ranges.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
+              {ads.map((ad: any, i: number) => (
+                <CreativeCard key={ad.ad_id || i} ad={ad} avgCpa={metaCPA} onPauseAd={openMetaPauseAdAction} />
+              ))}
+            </div>
           </SectionCard>
         )}
 
-        {/* ── Demographic Performance ── */}
-        {demographics.length > 0 && (
-          <SectionCard title="Demographic Performance" description="Spend and conversions by age and gender.">
-            <DetailTable
-              headers={[
-                { label: "Age", key: "age" },
-                { label: "Gender", key: "gender", render: (v) => <span className="capitalize">{v}</span> },
-                { label: "Impressions", key: "impressions", align: "right", render: (v) => fmt(v) },
-                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v) },
-                { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
-                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
-                { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? <MetricBadge value={fmtMYR(v)} good={v > 0 && v < 5} /> : <span className="text-text-muted">—</span> },
-              ]}
-              rows={demographics}
-            />
-          </SectionCard>
+        {/* ── Placements & Demographics Tab ── */}
+        {isTab("breakdowns") && (
+          placements.length > 0 || demographics.length > 0 ? (
+            <>
+              {placements.length > 0 && (
+                <SectionCard title="Placement Performance" description="Performance across Facebook, Instagram, Audience Network, and Messenger.">
+                  <DetailTable
+                    headers={[
+                      { label: "Placement", key: "placement_name" },
+                      { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                      { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                      { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v) },
+                      { label: "CPM", key: "cpm", align: "right", render: (v) => fmtMYR(v) },
+                      { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                      { label: "CPA", key: "cpa", align: "right", render: (v) => <MetricBadge value={fmtMYR(v)} good={getCpaBadgeStatus(v)} /> },
+                    ]}
+                    rows={placements}
+                  />
+                </SectionCard>
+              )}
+
+              {demographics.length > 0 && (
+                <SectionCard title="Demographic Performance" description="Spend and conversions by age and gender.">
+                  <DetailTable
+                    headers={[
+                      { label: "Age", key: "age" },
+                      { label: "Gender", key: "gender", render: (v) => <span className="capitalize">{v}</span> },
+                      { label: "Impressions", key: "impressions", align: "right", render: (v) => fmt(v) },
+                      { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                      { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v) },
+                      { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                      { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                      { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? <MetricBadge value={fmtMYR(v)} good={getCpaBadgeStatus(v)} /> : <span className="text-text-muted">—</span> },
+                    ]}
+                    rows={demographics}
+                  />
+                </SectionCard>
+              )}
+            </>
+          ) : activeTab === "breakdowns" ? (
+            <div className="rounded-2xl border border-border/60 bg-surface p-8 text-center shadow-sm">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-hover text-text-muted">
+                <Layers className="h-6 w-6 text-text-muted" />
+              </div>
+              <h3 className="mt-4 text-base font-bold text-foreground">Placement & Demographic Breakdowns</h3>
+              <p className="mx-auto mt-2 max-w-md text-xs text-text-muted leading-relaxed">
+                Meta placement and demographic breakdowns are captured as aggregated snapshots during the primary 90-day sync window. Because Meta does not store continuous daily breakdown logs for custom sub-ranges, this section is available in the 90-day view.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleRangeChange(getPresetRange(90))}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-accent-primary px-4 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 transition-opacity"
+              >
+                Switch to Last 90 Days
+              </button>
+            </div>
+          ) : null
         )}
 
-        {/* ── Geographic Performance ── */}
-        {geoMeta.length > 0 && (
-          <SectionCard title="Geographic Performance">
-            <DetailTable
-              headers={[
-                { label: "Location", key: "location_name" },
-                { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
-                { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
-                { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
-                { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v) },
-              ]}
-              rows={geoMeta}
-            />
-          </SectionCard>
+        {/* ── Geo, Device & Time Tab ── */}
+        {isTab("geo_time") && (
+          geoMeta.length > 0 || hourly.length > 0 || dayOfWeekRows.some((r) => r.spend > 0 || r.conversions > 0) ? (
+            <>
+              {geoMeta.length > 0 && (
+                <SectionCard title="Geographic Performance">
+                  <DetailTable
+                    headers={[
+                      { label: "Location", key: "location_name" },
+                      { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                      { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                      { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                      { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
+                      { label: "CTR", key: "ctr", align: "right", render: (v) => fmtPct(v) },
+                    ]}
+                    rows={geoMeta}
+                  />
+                </SectionCard>
+              )}
+
+              {(hourly.length > 0 || dayOfWeekRows.length > 0) && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {hourly.length > 0 && (
+                    <SectionCard title="Hourly Performance" description="Performance by hour of day.">
+                      <DetailTable
+                        headers={[
+                          { label: "Hour", key: "hour" },
+                          { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                          { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                          { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                          { label: "CPA", key: "cpa", align: "right", render: (_v, row) => row.conversions > 0 ? fmtMYR(cpaFor(row)) : <span className="text-text-muted">—</span> },
+                        ]}
+                        rows={hourly.map((h: any) => ({ ...h, hour: `${String(h.hour ?? h.hour_of_day ?? "").padStart(2, "0")}:00` }))}
+                      />
+                    </SectionCard>
+                  )}
+                  {dayOfWeekRows.length > 0 && (
+                    <SectionCard title="Day of Week Performance">
+                      <DetailTable
+                        headers={[
+                          { label: "Day", key: "day" },
+                          { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
+                          { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
+                          { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
+                          { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
+                        ]}
+                        rows={dayOfWeekRows}
+                      />
+                    </SectionCard>
+                  )}
+                </div>
+              )}
+            </>
+          ) : activeTab === "geo_time" ? (
+            <div className="rounded-2xl border border-border/60 bg-surface p-8 text-center shadow-sm">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-hover text-text-muted">
+                <Clock className="h-6 w-6 text-text-muted" />
+              </div>
+              <h3 className="mt-4 text-base font-bold text-foreground">Geographic & Hourly Performance</h3>
+              <p className="mx-auto mt-2 max-w-md text-xs text-text-muted leading-relaxed">
+                Geographic regional breakdowns and hourly heatmaps for Meta Ads are captured during the primary 90-day sync window. Switch back to the 90-day view to see Malaysian regional and time breakdowns.
+              </p>
+              <button
+                type="button"
+                onClick={() => handleRangeChange(getPresetRange(90))}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-accent-primary px-4 py-2 text-xs font-bold text-white shadow-sm hover:opacity-95 transition-opacity"
+              >
+                Switch to Last 90 Days
+              </button>
+            </div>
+          ) : null
         )}
 
-        {/* ── Conversion Tracking Health ── */}
-        {activeCampaignsM.length > 0 && (
+        {(isTab("overview") || isTab("campaigns")) && activeCampaignsM.length > 0 && (
           <SectionCard title="Conversion Tracking Health" description="Which active Meta campaigns are recording conversions — a broken pixel is often the real problem.">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4">
               <div className="rounded-xl border border-border/60 bg-surface-hover p-4">
@@ -884,37 +1013,18 @@ export default function MetaAdsPage() {
           </SectionCard>
         )}
 
-        {/* ── Time Performance ── */}
-        {(hourly.length > 0 || daily.length > 0) && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {hourly.length > 0 && (
-              <SectionCard title="Hourly Performance" description="Performance by hour of day.">
-                <DetailTable
-                  headers={[
-                    { label: "Hour", key: "hour" },
-                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                    { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
-                    { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
-                    { label: "CPA", key: "cpa", align: "right", render: (_v, row) => row.conversions > 0 ? fmtMYR(cpaFor(row)) : <span className="text-text-muted">—</span> },
-                  ]}
-                  rows={hourly.map((h: any) => ({ ...h, hour: `${String(h.hour ?? h.hour_of_day ?? "").padStart(2, "0")}:00` }))}
-                />
-              </SectionCard>
-            )}
-            {dayOfWeekRows.length > 0 && (
-              <SectionCard title="Day of Week Performance">
-                <DetailTable
-                  headers={[
-                    { label: "Day", key: "day" },
-                    { label: "Clicks", key: "clicks", align: "right", render: (v) => fmt(v) },
-                    { label: "Spend", key: "spend", align: "right", render: (v) => fmtMYR(v) },
-                    { label: "Conv", key: "conversions", align: "right", render: (v) => fmt(v) },
-                    { label: "CPA", key: "cpa", align: "right", render: (v, row) => row.conversions > 0 ? fmtMYR(v) : <span className="text-text-muted">—</span> },
-                  ]}
-                  rows={dayOfWeekRows}
-                />
-              </SectionCard>
-            )}
+        {activeTab === "all" && placements.length === 0 && demographics.length === 0 && geoMeta.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-border/80 bg-surface/60 p-6 text-center">
+            <p className="text-xs font-semibold text-text-muted">
+              Note: Placement, demographic, and geographic breakdowns are available in the full 90-day sync view because Meta does not provide continuous daily breakdown records for custom sub-ranges.
+            </p>
+            <button
+              type="button"
+              onClick={() => handleRangeChange(getPresetRange(90))}
+              className="mt-2 text-xs font-bold text-accent-primary hover:underline inline-block"
+            >
+              Switch to Last 90 Days to view all modules →
+            </button>
           </div>
         )}
 

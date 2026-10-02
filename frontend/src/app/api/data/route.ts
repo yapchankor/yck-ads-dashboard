@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { getAuthSession } from "@/lib/auth-helper";
 import { NextResponse } from "next/server";
 import { formatCurrency } from "@/lib/client-config";
 import { resolveClientName } from "@/lib/server-config";
@@ -140,7 +140,7 @@ function enrichRecommendation(raw: any) {
 }
 
 export async function GET(request: Request) {
-  const { userId } = await auth();
+  const { userId } = await getAuthSession();
 
   if (!userId) {
     return new NextResponse("Unauthorized", { status: 401 });

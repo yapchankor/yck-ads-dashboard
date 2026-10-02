@@ -1,9 +1,9 @@
-import { auth } from "@clerk/nextjs/server";
+import { getAuthSession, getAuthUser } from "@/lib/auth-helper";
 import { NextResponse } from "next/server";
 import { resolveClientName } from "@/lib/server-config";
 
 export async function GET(request: Request) {
-  const { userId } = await auth();
+  const { userId } = await getAuthSession();
   if (!userId) return new NextResponse("Unauthorized", { status: 401 });
 
   const { searchParams } = new URL(request.url);
@@ -41,7 +41,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { userId } = await auth();
+  const { userId, orgRole } = await getAuthSession();
   if (!userId) return new NextResponse("Unauthorized", { status: 401 });
 
   try {
@@ -58,13 +58,44 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Modal apply API is not configured" }, { status: 500 });
     }
 
+    // Resolve verified operator identity from session
+    const clerkUser = await getAuthUser();
+    const userRole = (clerkUser as any)?.publicMetadata?.role;
+    if (userRole === "viewer" || orgRole === "org:viewer") {
+      return NextResponse.json(
+        { error: "Read-only access: Operator or Admin permissions are required to execute ad network mutations." },
+        { status: 403 }
+      );
+    }
+
+    const operatorName = clerkUser
+      ? (clerkUser.fullName || [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || clerkUser.primaryEmailAddress?.emailAddress || userId)
+      : "Authenticated Operator";
+    const operatorEmail = clerkUser?.primaryEmailAddress?.emailAddress || "";
+    const operatorAvatar = clerkUser?.imageUrl || "";
+
+    const payload = {
+      ...body,
+      client_name: resolvedClient.clientName,
+      applied_by: {
+        user_id: userId,
+        name: operatorName,
+        email: operatorEmail,
+        avatar: operatorAvatar,
+      },
+      applied_by_user_id: userId,
+      applied_by_name: operatorName,
+      applied_by_email: operatorEmail,
+      applied_by_avatar: operatorAvatar,
+    };
+
     const response = await fetch(modalUrl, {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
         "x-api-key": apiKey 
       },
-      body: JSON.stringify({ ...body, client_name: resolvedClient.clientName }),
+      body: JSON.stringify(payload),
     });
 
     const result = await response.json();
@@ -76,8 +107,17 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const { userId } = await auth();
+  const { userId, orgRole } = await getAuthSession();
   if (!userId) return new NextResponse("Unauthorized", { status: 401 });
+
+  const clerkUser = await getAuthUser();
+  const userRole = (clerkUser as any)?.publicMetadata?.role;
+  if (userRole === "viewer" || orgRole === "org:viewer") {
+    return NextResponse.json(
+      { error: "Read-only access: Operator or Admin permissions are required to dismiss tracking records." },
+      { status: 403 }
+    );
+  }
 
   const { searchParams } = new URL(request.url);
   const recommendationId = searchParams.get("recommendation_id");

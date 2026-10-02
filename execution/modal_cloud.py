@@ -9,7 +9,7 @@ Production Mode: Reports sent to client emails in database
 Schedule: Every Monday 8 AM Malaysia Time (GMT+8)
 """
 
-import modal
+import modal  # type: ignore[import-not-found]
 from datetime import datetime, timedelta
 import json
 import os
@@ -315,17 +315,34 @@ def summarize_campaigns(campaigns):
 
 def generate_cross_platform_recommendations(data):
     campaigns = data.get("campaigns") or []
+    client_name = data.get("client_name") or ""
+    currency = "£" if "genera" in client_name.lower() else "RM "
+
     by_platform = {}
     for campaign in campaigns:
         platform = campaign.get("platform") or "Google"
-        stats = by_platform.setdefault(platform, {"spend": 0.0, "conversions": 0.0, "campaigns": 0})
+        stats = by_platform.setdefault(platform, {
+            "spend": 0.0,
+            "conversions": 0.0,
+            "conversion_value": 0.0,
+            "campaigns": 0,
+        })
         stats["spend"] += float(campaign.get("spend", campaign.get("cost", 0)) or 0)
         stats["conversions"] += float(campaign.get("conversions", 0) or 0)
+        stats["conversion_value"] += float(campaign.get("conversion_value", 0) or 0)
         stats["campaigns"] += 1
 
     google = by_platform.get("Google")
     meta = by_platform.get("Meta")
     if not google or not meta:
+        return []
+
+    # ABSTENTION PRINCIPLE:
+    # 1. Both platforms must have recorded statistically meaningful activity (>= 5 conversions and >= 100 spend).
+    # 2. If one platform has zero conversions or conversion tracking is unverified, abstain from recommending budget shifts.
+    if google["conversions"] < 5 or meta["conversions"] < 5:
+        return []
+    if google["spend"] < 100 or meta["spend"] < 100:
         return []
 
     for stats in (google, meta):
@@ -336,46 +353,47 @@ def generate_cross_platform_recommendations(data):
 
     winner_name, winner = ("Google", google) if google["cpa"] < meta["cpa"] else ("Meta", meta)
     loser_name, loser = ("Meta", meta) if winner_name == "Google" else ("Google", google)
+
+    # Must show a clear efficiency divergence (> 25% difference in CPA) to justify an experiment
     if loser["cpa"] <= winner["cpa"] * 1.25:
         return []
 
-    shift_amount = min(loser["spend"] * 0.1, winner["spend"] * 0.2)
+    # Controlled 10-15% experiment: 10% of loser spend, capped at 15% of winner spend
+    shift_amount = min(loser["spend"] * 0.10, winner["spend"] * 0.15)
+    if shift_amount < 20:
+        return []
+
     potential_conversions = shift_amount / winner["cpa"] if winner["cpa"] else 0
     current_conversions = shift_amount / loser["cpa"] if loser["cpa"] else 0
     additional_conversions = max(0, potential_conversions - current_conversions)
 
-    # Value of the extra conversions gained at the more efficient CPA. Budget is
-    # reallocated (total spend unchanged), so net benefit = that value with no
-    # additional spend. customer_value = 3x CPA fallback matches impact_models.py.
-    customer_value = winner["cpa"] * 3
-    additional_revenue = additional_conversions * customer_value
-    net_benefit = additional_revenue
-
+    # Framed strictly as a controlled experiment without claiming unverified 3x CPA revenue multipliers
     return [{
         "id": f"cross_platform_budget_shift_{winner_name.lower()}_{loser_name.lower()}",
         "recommendation_id": f"cross_platform_budget_shift_{winner_name.lower()}_{loser_name.lower()}",
         "type": "cross_platform_budget_shift",
         "action_type": "cross_platform_budget_shift",
-        "title": f"Shift test budget from {loser_name} to {winner_name}",
+        "title": f"Controlled 10% budget experiment: Test shifting spend from {loser_name} to {winner_name}",
         "description": (
-            f"{winner_name} CPA is RM {winner['cpa']:.2f} versus {loser_name} CPA RM {loser['cpa']:.2f}. "
-            f"Move a controlled RM {shift_amount:.0f} test budget toward the more efficient platform."
+            f"Observed {winner_name} CPA is {currency}{winner['cpa']:.2f} versus {loser_name} CPA {currency}{loser['cpa']:.2f}. "
+            f"Test shifting a controlled 10% ({currency}{shift_amount:.0f}) toward {winner_name} as an experiment. "
+            f"Note: Ad networks use different attribution models and conversion lag; evaluate incremental lift after 14 days."
         ),
         "platform": "Cross-Platform",
         "impact": "Medium",
-        "expected_impact": f"Potential +{additional_conversions:.1f} conversions if CPA holds.",
+        "expected_impact": f"Projected +{additional_conversions:.1f} conversions if {winner_name} efficiency holds during experiment.",
         "impact_data": {
             "monthly_savings": 0,
-            "additional_conversions_monthly": additional_conversions,
-            "additional_revenue_monthly": additional_revenue,
+            "additional_conversions_monthly": round(additional_conversions, 1),
+            "additional_revenue_monthly": 0,
             "additional_spend_monthly": 0,
-            "net_benefit_monthly": net_benefit,
+            "net_benefit_monthly": 0,
             "confidence": "moderate",
-            "confidence_pct": 65,
+            "confidence_pct": 60,
         },
         "automation": {
             "is_automatable": False,
-            "manual_reason": "Cross-platform budget shifts require human approval and budget planning.",
+            "manual_reason": "Cross-platform budget shifts require human operator verification of attribution windows and budget planning.",
         },
     }]
 
@@ -1563,7 +1581,7 @@ def _render_html_to_pdf(html_content, landscape=False):
     landscape=True widens the page to A4 landscape (~297mm) for wide multi-column tables
     (e.g. the Meta campaign/ad-set tables) that don't fit in portrait.
     """
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import sync_playwright  # type: ignore[import-not-found,import-untyped]
 
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--no-sandbox"])
@@ -1921,9 +1939,9 @@ def build_timeseries(google_daily, meta_daily):
 # WEB API ENDPOINTS
 # ============================================================================
 
-from fastapi import FastAPI, Header, HTTPException, Request, Body
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, Header, HTTPException, Request, Body  # type: ignore[import-not-found]
+from fastapi.responses import JSONResponse  # type: ignore[import-not-found]
+from pydantic import BaseModel, Field  # type: ignore[import-not-found]
 
 web_app = FastAPI()
 
@@ -1972,6 +1990,11 @@ class ApplyRequest(BaseModel):
     expected_impact: Any = None
     manual: bool = False
     status: Any = None
+    applied_by: Optional[dict] = None
+    applied_by_name: Optional[str] = None
+    applied_by_email: Optional[str] = None
+    applied_by_user_id: Optional[str] = None
+    applied_by_avatar: Optional[str] = None
 
 class EmailSettingsRequest(BaseModel):
     client_name: str
@@ -2341,6 +2364,12 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
     request.expected_impact = request_text(request.expected_impact)
     request.status = request_text(request.status)
 
+    applied_by_data = request.applied_by if isinstance(request.applied_by, dict) else {}
+    applied_by_name = request_text(request.applied_by_name or applied_by_data.get("name"))
+    applied_by_email = request_text(request.applied_by_email or applied_by_data.get("email"))
+    applied_by_user_id = request_text(request.applied_by_user_id or applied_by_data.get("user_id"))
+    applied_by_avatar = request_text(request.applied_by_avatar or applied_by_data.get("avatar"))
+
     if not request.client_name or not request.recommendation_id or not request.action_type or not request.platform:
         raise HTTPException(
             status_code=400,
@@ -2588,6 +2617,12 @@ def apply_recommendation(request: ApplyRequest, x_api_key: str = Header(None)):
         "expected_impact": request.expected_impact,
         "title": request.title,
         "applied_at": datetime.now().isoformat(),
+        "applied_by": {
+            "name": applied_by_name or "Authenticated Operator",
+            "email": applied_by_email or "",
+            "user_id": applied_by_user_id or "",
+            "avatar": applied_by_avatar or "",
+        },
         "baseline_metrics": baseline_metrics,
         "suggested_action": request.suggested_action,
         "target_id": request.target_id,
@@ -3104,6 +3139,93 @@ def get_dashboard_data(client_name: str = None, start_date: str = None, end_date
             google_data.get('campaign_daily', []),
             meta_daily_rows,
         )
+
+        # ------------------------------------------------
+        # Cross-platform Budget Pacing Normalization (Phase 3)
+        # Handles exact calendar month length, Google shared budgets,
+        # and Meta CBO vs ABO campaign budget structures.
+        # ------------------------------------------------
+        google_pacing = data.get('budget_pacing') or {}
+        if not google_pacing.get('daily_avg_spend') and google_data:
+            try:
+                import analyze_week2_insights
+                google_pacing = analyze_week2_insights.analyze_budget_pacing(google_data)
+            except Exception as e:
+                print(f"Warning: could not recalculate google pacing: {e}")
+
+        meta_pacing = {}
+        if fb_metrics_files:
+            try:
+                import analyze_facebook_insights
+                fb_data_obj = locals().get('fb_data') or {}
+                fb_campaigns_obj = locals().get('fb_campaigns') or fb_data_obj.get('campaigns', [])
+                fb_days = date_range_days(start_date, end_date) if requested_range else (fb_data_obj.get('date_range', {}).get('days') or 30)
+                meta_pacing = analyze_facebook_insights.analyze_budget_pacing(
+                    fb_campaigns_obj,
+                    fb_days,
+                    ad_sets=data.get('ad_sets') or fb_data_obj.get('ad_sets', []),
+                    date_range=data.get('date_range') or fb_data_obj.get('date_range')
+                )
+            except Exception as e:
+                print(f"Warning: could not calculate meta pacing: {e}")
+
+        g_daily = safe_number(google_pacing.get('daily_avg_spend'))
+        m_daily = safe_number(meta_pacing.get('daily_avg_spend'))
+        blended_daily = g_daily + m_daily
+
+        fb_summary_spend = 0
+        if 'fb_data' in locals() and isinstance(locals()['fb_data'], dict):
+            fb_summary_spend = safe_number(locals()['fb_data'].get('summary', {}).get('total_spend'))
+
+        g_spend = safe_number(google_pacing.get('total_spend')) or safe_number(google_data.get('summary', {}).get('total_cost'))
+        m_spend = safe_number(meta_pacing.get('total_spend')) or fb_summary_spend
+        blended_spend = g_spend + m_spend
+
+        days_in_m = google_pacing.get('days_in_month') or meta_pacing.get('days_in_month') or 30
+        days_elapsed = google_pacing.get('days_elapsed_this_month') or meta_pacing.get('days_elapsed_this_month') or 1
+        days_remaining = google_pacing.get('days_remaining_this_month') or meta_pacing.get('days_remaining_this_month') or max(0, days_in_m - days_elapsed)
+        blended_projected = blended_daily * days_in_m
+
+        g_budget_val = google_pacing.get('planned_monthly_budget')
+        g_budget = safe_number(g_budget_val) if g_budget_val is not None else None
+        m_budget_val = meta_pacing.get('planned_monthly_budget')
+        m_budget = safe_number(m_budget_val) if m_budget_val is not None else None
+        blended_budget = (g_budget or 0) + (m_budget or 0) if (g_budget or m_budget) else None
+
+        blended_pacing_pct = ((blended_projected / blended_budget) * 100) if (blended_budget and blended_budget > 0) else None
+        if blended_pacing_pct is not None:
+            blended_status = "overpacing" if blended_pacing_pct > 110 else "underpacing" if blended_pacing_pct < 85 else "on_track"
+        else:
+            blended_status = "unknown"
+
+        blended_pacing = {
+            "total_spend": round(blended_spend, 2),
+            "daily_avg_spend": round(blended_daily, 2),
+            "projected_monthly_spend": round(blended_projected, 2),
+            "days_in_period": max(google_pacing.get('days_in_period', 0), meta_pacing.get('days_in_period', 0)),
+            "days_in_month": days_in_m,
+            "days_elapsed_this_month": days_elapsed,
+            "days_remaining_this_month": days_remaining,
+            "planned_monthly_budget": round(blended_budget, 2) if blended_budget else None,
+            "pacing_pct": round(blended_pacing_pct, 1) if blended_pacing_pct is not None else None,
+            "status": blended_status,
+        }
+
+        data['budget_pacing'] = {
+            "daily_avg_spend": google_pacing.get('daily_avg_spend') or round(blended_daily, 2),
+            "days_in_period": google_pacing.get('days_in_period') or blended_pacing['days_in_period'],
+            "days_in_month": days_in_m,
+            "projected_monthly_spend": google_pacing.get('projected_monthly_spend') or round(blended_projected, 2),
+            "days_elapsed_this_month": days_elapsed,
+            "days_remaining_this_month": days_remaining,
+            "alerts": google_pacing.get('alerts', []),
+            "pacing_pct": google_pacing.get('pacing_pct'),
+            "status": google_pacing.get('status', 'unknown'),
+            "planned_monthly_budget": google_pacing.get('planned_monthly_budget'),
+            "google": google_pacing,
+            "meta": meta_pacing,
+            "blended": blended_pacing,
+        }
 
         return data
     except Exception as e:

@@ -1,8 +1,8 @@
-import { auth } from "@clerk/nextjs/server";
+import { getAuthSession } from "@/lib/auth-helper";
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
-  const { userId } = await auth();
+  const { userId } = await getAuthSession();
   if (!userId) return new NextResponse("Unauthorized", { status: 401 });
 
   const modalUrl = process.env.MODAL_REFRESH_STATUS_URL || process.env.MODAL_API_BASE_URL;

@@ -247,48 +247,109 @@ def analyze_placement_efficiency(placements):
     }
 
 
-def analyze_budget_pacing(campaigns, days_in_range):
+def analyze_budget_pacing(campaigns, days_in_range, ad_sets=None, date_range=None):
     """
-    Analyze budget pacing and spending patterns.
-
-    Same concept as Google Ads budget pacing but uses Facebook's
-    daily_budget and lifetime_budget fields.
+    Analyze budget pacing and spending patterns with exact month length
+    and Meta CBO (Campaign Budget) vs ABO (Ad Set Budget) normalization.
     """
     if not campaigns:
         return {}
 
-    total_spend = sum(c['spend'] for c in campaigns)
-    daily_avg = total_spend / days_in_range if days_in_range > 0 else 0
-    projected_monthly = daily_avg * 30
+    import calendar
+    from datetime import datetime
 
-    # Check individual campaign pacing
+    total_spend = sum(c.get('spend', 0) for c in campaigns)
+    daily_avg = total_spend / days_in_range if days_in_range > 0 else 0
+
+    # Determine reference date and exact month length
+    ref_date = datetime.now()
+    if date_range and isinstance(date_range, dict) and date_range.get('end_date'):
+        try:
+            ref_date = datetime.strptime(date_range['end_date'], '%Y-%m-%d')
+        except (ValueError, TypeError):
+            pass
+
+    year = ref_date.year
+    month = ref_date.month
+    days_in_month = calendar.monthrange(year, month)[1]
+    days_elapsed = min(ref_date.day, days_in_month)
+    days_remaining = max(0, days_in_month - days_elapsed)
+
+    projected_monthly = daily_avg * days_in_month
+
+    # Map ad sets by campaign_id for ABO detection
+    adsets_by_camp = {}
+    if ad_sets and isinstance(ad_sets, list):
+        for s in ad_sets:
+            c_id = str(s.get('campaign_id', ''))
+            if c_id:
+                adsets_by_camp.setdefault(c_id, []).append(s)
+
     pacing_details = []
+    account_daily_budget = 0.0
+
     for camp in campaigns:
         daily_budget = camp.get('daily_budget', 0)
         lifetime_budget = camp.get('lifetime_budget', 0)
         camp_spend = camp.get('spend', 0)
         camp_daily_avg = camp_spend / days_in_range if days_in_range > 0 else 0
+        camp_id = str(camp.get('campaign_id') or camp.get('id', ''))
+
+        budget = 0.0
+        budget_type = None
+        budget_structure = "unknown"
 
         if daily_budget > 0:
-            utilization = (camp_daily_avg / daily_budget) * 100
+            budget = daily_budget
+            budget_type = "daily"
+            budget_structure = "CBO"
+            account_daily_budget += daily_budget
+        elif lifetime_budget > 0:
+            budget = lifetime_budget
+            budget_type = "lifetime"
+            budget_structure = "CBO"
+        else:
+            # Check for ABO (Ad Set Budget) under this campaign
+            child_adsets = adsets_by_camp.get(camp_id, [])
+            active_adsets = [
+                s for s in child_adsets
+                if s.get('status') in ('ACTIVE', 'Active', 'ENABLED', 'Enabled')
+            ]
+            sum_daily_adsets = sum(s.get('daily_budget', 0) for s in active_adsets)
+            sum_lifetime_adsets = sum(s.get('lifetime_budget', 0) for s in active_adsets)
+
+            if sum_daily_adsets > 0:
+                budget = sum_daily_adsets
+                budget_type = "daily"
+                budget_structure = "ABO"
+                account_daily_budget += sum_daily_adsets
+            elif sum_lifetime_adsets > 0:
+                budget = sum_lifetime_adsets
+                budget_type = "lifetime"
+                budget_structure = "ABO"
+
+        if budget > 0 and budget_type == 'daily':
+            utilization = (camp_daily_avg / budget) * 100
             pacing_details.append({
-                'campaign_name': camp.get('campaign_name', ''),
-                'campaign_id': camp.get('campaign_id'),
+                'campaign_name': camp.get('campaign_name') or camp.get('name', ''),
+                'campaign_id': camp_id,
                 'budget_type': 'daily',
-                'budget': daily_budget,
+                'budget_structure': budget_structure,
+                'budget': round(budget, 2),
                 'avg_daily_spend': round(camp_daily_avg, 2),
                 'utilization_pct': round(utilization, 1),
                 'status': 'overspending' if utilization > 110 else (
                     'underspending' if utilization < 70 else 'on_track'
                 ),
             })
-        elif lifetime_budget > 0:
-            utilization = (camp_spend / lifetime_budget) * 100
+        elif budget > 0 and budget_type == 'lifetime':
+            utilization = (camp_spend / budget) * 100
             pacing_details.append({
-                'campaign_name': camp.get('campaign_name', ''),
-                'campaign_id': camp.get('campaign_id'),
+                'campaign_name': camp.get('campaign_name') or camp.get('name', ''),
+                'campaign_id': camp_id,
                 'budget_type': 'lifetime',
-                'budget': lifetime_budget,
+                'budget_structure': budget_structure,
+                'budget': round(budget, 2),
                 'total_spend': round(camp_spend, 2),
                 'utilization_pct': round(utilization, 1),
                 'status': 'overspending' if utilization > 90 else (
@@ -296,11 +357,28 @@ def analyze_budget_pacing(campaigns, days_in_range):
                 ),
             })
 
+    planned_monthly_budget = (account_daily_budget * days_in_month) if account_daily_budget > 0 else None
+    pacing_pct = ((projected_monthly / planned_monthly_budget) * 100) if (planned_monthly_budget and planned_monthly_budget > 0) else None
+    if pacing_pct is not None:
+        pacing_status = "overpacing" if pacing_pct > 110 else "underpacing" if pacing_pct < 85 else "on_track"
+    else:
+        pacing_status = "unknown"
+
     return {
         'total_spend': round(total_spend, 2),
+        'daily_avg_spend': round(daily_avg, 2),
         'daily_average': round(daily_avg, 2),
+        'projected_monthly_spend': round(projected_monthly, 2),
         'projected_monthly': round(projected_monthly, 2),
+        'days_in_period': days_in_range,
         'days_in_range': days_in_range,
+        'days_in_month': days_in_month,
+        'days_elapsed_this_month': days_elapsed,
+        'days_remaining_this_month': days_remaining,
+        'account_daily_budget': round(account_daily_budget, 2) if account_daily_budget > 0 else None,
+        'planned_monthly_budget': round(planned_monthly_budget, 2) if planned_monthly_budget else None,
+        'pacing_pct': round(pacing_pct, 1) if pacing_pct is not None else None,
+        'status': pacing_status,
         'campaign_pacing': pacing_details,
     }
 
